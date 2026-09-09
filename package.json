@@ -1,0 +1,28 @@
+{
+  "name": "server-api",
+  "main": "api/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "nodemon api/index.js",
+    "dev": "nodemon api/index.js",
+    "build": "echo 'Skipping build step'",
+    "seed:category": "node seed/seedCategory.js"
+  },
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "bcryptjs": "^3.0.2",
+    "cloudinary": "^1.41.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.15.1",
+    "multer": "^1.4.5-lts.1",
+    "multer-storage-cloudinary": "^4.0.0",
+    "nodemailer": "^8.0.5",
+    "vercel": "^28.16.11"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}
