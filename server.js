@@ -13,10 +13,8 @@ import userRoute from "./routes/userRoutes.js";
 import adminRoute from "./routes/admin/index.js";
 import userProtectedRoute from "./routes/user/index.js";
 import { initCloudinary } from "./utils/cloudinary.js";
-import seedCategories from "./seed/seedCategory.js";
-import seedProducts from "./seed/seedProduct.js";
+
 import connectDB from "./db-config/db.js";
-import { seedData } from "./controllers/policyController.js";
 
 const app = express();
 
@@ -48,7 +46,7 @@ const corsOptions = {
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
 };
-// connectDB();
+connectDB();
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions), (req, res) => {
   res.sendStatus(200);
@@ -90,7 +88,7 @@ app.get("/", (req, res) => {
 app.get("/seed", async (req, res) => {
   // await seedCategories();
   // await seedProducts();
-  await seedData();
+  // await seedData();
   res.json({ message: "Categories seeded successfully" });
 });
 app.all("*", (req, res) => {

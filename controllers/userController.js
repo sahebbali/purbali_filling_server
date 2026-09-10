@@ -1,5 +1,4 @@
 import User from "../models/userModel.js";
-import Order from "../models/orderModel.js";
 import bcrypt from "bcryptjs";
 
 export const createUser = async (req, res) => {
@@ -112,70 +111,6 @@ export const getUsers = async (req, res) => {
   } catch (error) {
     console.error("Error fetching users:", error);
     res.status(500).json({ message: "Internal Server Error" });
-  }
-};
-
-// Get a single user by ID
-export const getUserById = async (req, res) => {
-  try {
-    const requester = req.auth?.email;
-
-    if (!requester) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-
-    // Run queries in parallel for better performance
-    const [user, orders, totalOrders, deliveredOrders, cancelledOrders] =
-      await Promise.all([
-        User.findOne({ email: requester }).select("-password").lean(),
-
-        Order.find({ "customer.email": requester })
-          .sort({ createdAt: -1 }) // latest first
-          .limit(3)
-          .select("_id  orderId createdAt total status items")
-          .lean(),
-        Order.countDocuments({ "customer.email": requester }),
-        Order.countDocuments({
-          "customer.email": requester,
-          status: "delivered",
-        }),
-        Order.countDocuments({
-          "customer.email": requester,
-          status: "cancelled",
-        }),
-      ]);
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-    const formattedOrders = orders.map((order) => ({
-      id: order.orderId,
-      date: order.createdAt,
-      total: order.total,
-      status: order.status,
-      items: order.items?.length || 0,
-    }));
-
-    // Attach computed field safely
-    const response = {
-      ...user,
-      Orders: formattedOrders,
-      totalOrders: totalOrders || 0,
-      deliveredOrders: deliveredOrders || 0,
-      cancelledOrders: cancelledOrders || 0,
-    };
-
-    return res.status(200).json({
-      success: true,
-      data: response,
-    });
-  } catch (error) {
-    console.error("Error fetching user:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Internal Server Error",
-    });
   }
 };
 
@@ -376,7 +311,7 @@ export const updateUserPreferences = async (req, res) => {
 export default {
   createUser,
   getUsers,
-  getUserById,
+
   updateUser,
   deleteUserAddress,
   updatePassword,

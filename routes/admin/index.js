@@ -1,33 +1,15 @@
 import express from "express";
 import { verifyJWT, verifyAdmin } from "../../middleware/authMiddleware.js";
-import categoryRoutes from "./category.js";
-import productRoutes from "./product.js";
-import orderRoutes from "./order.js";
-import inventoryRoutes from "./inventory.js";
-import paymentRoutes from "./payment.js";
-import customerRoutes from "./customer.js";
+
 import settingRoutes from "./setting.js";
-import couponRoutes from "./coupon.js";
-import reportRoutes from "./report.js";
+
 import policyRoutes from "./policy.js";
-import discountRoutes from "./discount.js";
-import brandRoutes from "./brand.js";
-import carouselManagerRoutes from "./carouselManager.js";
 
 const router = express.Router();
 const middleware = [verifyJWT, verifyAdmin];
 router.use(middleware);
-router.use(categoryRoutes);
-router.use(inventoryRoutes);
-router.use(orderRoutes);
-router.use(productRoutes);
-router.use(paymentRoutes);
-router.use(customerRoutes);
 router.use(settingRoutes);
-router.use(couponRoutes);
-router.use(reportRoutes);
+// router.use(reportRoutes);
 router.use(policyRoutes);
-router.use(discountRoutes);
-router.use(brandRoutes);
-router.use(carouselManagerRoutes);
+
 export default router;

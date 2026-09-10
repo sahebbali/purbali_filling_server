@@ -1,5 +1,5 @@
 import express from "express";
-import paymentController from "../../controllers/paymentController.js";
+
 import {
   addItem,
   createPolicy,
