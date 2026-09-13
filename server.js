@@ -90,7 +90,7 @@ app.get("/seed", async (req, res) => {
   // await seedCategories();
   // await seedProducts();
   // await seedData();
-  await seedAccounts();
+  // await seedAccounts();
   res.json({ message: "Categories seeded successfully" });
 });
 app.all("*", (req, res) => {
