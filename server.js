@@ -15,6 +15,7 @@ import userProtectedRoute from "./routes/user/index.js";
 import { initCloudinary } from "./utils/cloudinary.js";
 
 import connectDB from "./db-config/db.js";
+import { seedAccounts } from "./seed/seedAccounts.js";
 
 const app = express();
 
@@ -89,6 +90,7 @@ app.get("/seed", async (req, res) => {
   // await seedCategories();
   // await seedProducts();
   // await seedData();
+  await seedAccounts();
   res.json({ message: "Categories seeded successfully" });
 });
 app.all("*", (req, res) => {

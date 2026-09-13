@@ -6,7 +6,8 @@
     "start": "nodemon api/index.js",
     "dev": "nodemon api/index.js",
     "build": "echo 'Skipping build step'",
-    "seed:category": "node seed/seedCategory.js"
+    "seed:category": "node seed/seedCategory.js",
+    "seed:accounts": "node seed/seedAccounts.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
