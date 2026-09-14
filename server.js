@@ -16,6 +16,7 @@ import { initCloudinary } from "./utils/cloudinary.js";
 
 import connectDB from "./db-config/db.js";
 import { seedAccounts } from "./seed/seedAccounts.js";
+import { seedRateManager } from "./seed/rateManager.js";
 
 const app = express();
 
@@ -91,7 +92,8 @@ app.get("/seed", async (req, res) => {
   // await seedProducts();
   // await seedData();
   // await seedAccounts();
-  res.json({ message: "Categories seeded successfully" });
+  await seedRateManager();
+  res.json({ message: "Rates seeded successfully" });
 });
 app.all("*", (req, res) => {
   res.status(404).json({ message: "API route not found", path: req.path });

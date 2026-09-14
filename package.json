@@ -5,8 +5,7 @@
   "scripts": {
     "start": "nodemon api/index.js",
     "dev": "nodemon api/index.js",
-    "build": "echo 'Skipping build step'",
-    "seed:category": "node seed/seedCategory.js"
+    "build": "echo 'Skipping build step'"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

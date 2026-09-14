@@ -3,7 +3,16 @@ import PurbaliEntry from "../models/PurbaliEntry.js";
 // @route   POST /api/purbali-entries
 export const createEntry = async (req, res) => {
   try {
-    const { date, receivingDate, vehicleNo, couponNo, carNo, items } = req.body;
+    const {
+      accountNo,
+      department,
+      date,
+      receivingDate,
+      vehicleNo,
+      couponNo,
+      carNo,
+      items,
+    } = req.body;
 
     if (!date || !carNo) {
       return res
@@ -17,6 +26,8 @@ export const createEntry = async (req, res) => {
     }
 
     const entry = await PurbaliEntry.create({
+      accountNo,
+      department,
       date,
       receivingDate,
       vehicleNo,
