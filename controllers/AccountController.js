@@ -27,6 +27,42 @@ export const getAccountsNumbers = async (req, res) => {
     });
   }
 };
+export const getAccountsDetailsByNumber = async (req, res) => {
+  try {
+    const { ac_no } = req.query;
+
+    if (!ac_no) {
+      return res.status(400).json({
+        success: false,
+        message: "Account number is required",
+      });
+    }
+
+    const accounts = await Account.find({ ac_no }).sort({ _id: 1 }).lean();
+
+    if (accounts.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No account found with this account number",
+        data: [],
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      count: accounts.length,
+      data: accounts,
+    });
+  } catch (error) {
+    console.error("Get account details error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch account details",
+      error: error.message,
+    });
+  }
+};
 
 export const getTagsByAccountNumber = async (req, res) => {
   try {

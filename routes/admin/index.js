@@ -7,6 +7,7 @@ import policyRoutes from "./policy.js";
 import purbaliRoutes from "./purbaliRoute.js";
 import purbaliRateRoutes from "./purbaliRateRoute.js";
 import accountRoute from "./accountInfoRoute.js";
+import billRoute from "./billRoute.js";
 
 const router = express.Router();
 const middleware = [verifyJWT, verifyAdmin];
@@ -17,5 +18,5 @@ router.use(policyRoutes);
 router.use(purbaliRoutes);
 router.use(purbaliRateRoutes);
 router.use(accountRoute);
-
+router.use(billRoute);
 export default router;
