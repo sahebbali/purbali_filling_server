@@ -1,45 +1,49 @@
 import PurbaliEntry from "../models/PurbaliEntry.js";
 
 // @route   POST /api/purbali-entries
-export const createEntry = async (req, res) => {
+export const createPurbaliEntry = async (req, res) => {
   try {
     const {
-      accountNo,
-      department,
       date,
       receivingDate,
-      vehicleNo,
       couponNo,
+      accountNo,
+      department,
+      consumptionType,
       carNo,
       items,
+      totalAmount,
     } = req.body;
 
-    if (!date || !carNo) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Date and Car No are required" });
+    if (!date) {
+      return res.status(400).json({ message: "Date is required." });
+    }
+    if (!carNo || !String(carNo).trim()) {
+      return res.status(400).json({ message: "Car number is required." });
     }
     if (!Array.isArray(items) || items.length === 0) {
       return res
         .status(400)
-        .json({ success: false, message: "At least one item is required" });
+        .json({ message: "At least one item is required." });
     }
 
     const entry = await PurbaliEntry.create({
-      accountNo,
-      department,
       date,
       receivingDate,
-      vehicleNo,
       couponNo,
+      accountNo,
+      department,
+      consumptionType,
       carNo,
       items,
-      createdBy: req.user?._id, // remove if no auth middleware
+      totalAmount,
+      createdBy: req.user?._id,
     });
 
-    res.status(201).json({ success: true, data: entry });
+    return res.status(201).json({ message: "Purbali entry created.", entry });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    console.error("createPurbaliEntry error:", err);
+    return res.status(500).json({ message: "Failed to create Purbali entry." });
   }
 };
 
@@ -160,6 +164,22 @@ export const updateEntry = async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 };
+
+// exports.updatePurbaliEntry = async (req, res) => {
+//   try {
+//     const entry = await PurbaliEntry.findByIdAndUpdate(req.params.id, req.body, {
+//       new: true,
+//       runValidators: true,
+//     });
+//     if (!entry) {
+//       return res.status(404).json({ message: "Entry not found." });
+//     }
+//     return res.json({ message: "Entry updated.", entry });
+//   } catch (err) {
+//     console.error("updatePurbaliEntry error:", err);
+//     return res.status(500).json({ message: "Failed to update entry." });
+//   }
+// };
 
 // @desc    Delete an entry
 // @route   DELETE /api/purbali-entries/:id
