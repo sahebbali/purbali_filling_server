@@ -28,11 +28,7 @@ dns.setServers(["8.8.8.8", "1.1.1.1", "0.0.0.0"]);
 const allowedOrigins = [
   "http://localhost:3000",
   "http://localhost:5173",
-  "http://localhost:5174",
-  "https://tescongroup.netlify.app",
-  "https://tescongroupadmin.netlify.app",
-  "https://admin.tescon-group.com",
-  "https://tescon-group.com",
+  "https://pubali-filling-station.netlify.app",
 ];
 
 const corsOptions = {
