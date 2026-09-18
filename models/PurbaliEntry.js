@@ -13,10 +13,10 @@ const purbaliItemSchema = new mongoose.Schema(
 
 const purbaliEntrySchema = new mongoose.Schema(
   {
-    date: { type: Date, required: true },
-    receivingDate: { type: Date },
-    couponNo: { type: String, trim: true },
-    accountNo: { type: String, trim: true },
+    date: { type: Date, required: true, default: Date.now },
+    receivingDate: { type: Date, default: Date.now },
+    couponNo: { type: String, required: true, trim: true },
+    accountNo: { type: String, required: true, trim: true },
 
     // Account-specific tag (e.g. a client/site tag), separate from consumptionType
     department: { type: String, trim: true },
@@ -28,7 +28,7 @@ const purbaliEntrySchema = new mongoose.Schema(
       default: "",
     },
 
-    carNo: { type: String, required: true, trim: true },
+    carNo: { type: String, trim: true },
 
     items: {
       type: [purbaliItemSchema],

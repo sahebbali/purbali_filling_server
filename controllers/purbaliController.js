@@ -18,13 +18,21 @@ export const createPurbaliEntry = async (req, res) => {
     if (!date) {
       return res.status(400).json({ message: "Date is required." });
     }
-    if (!carNo || !String(carNo).trim()) {
-      return res.status(400).json({ message: "Car number is required." });
+    if (!carNo && !consumptionType) {
+      return res
+        .status(400)
+        .json({ message: "Car number or consumption type is required." });
     }
     if (!Array.isArray(items) || items.length === 0) {
       return res
         .status(400)
         .json({ message: "At least one item is required." });
+    }
+    const existCoupon = await PurbaliEntry.findOne({ couponNo });
+    if (existCoupon) {
+      return res
+        .status(400)
+        .json({ message: "An entry with this coupon number already exists." });
     }
 
     const entry = await PurbaliEntry.create({
@@ -106,7 +114,7 @@ export const getEntries = async (req, res) => {
 
     const [entries, total] = await Promise.all([
       PurbaliEntry.find(filter)
-        .sort({ [sortField]: sortDir })
+        .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limitNum)
         .lean(), // faster, read-only history view doesn't need mongoose docs
@@ -159,7 +167,11 @@ export const updateEntry = async (req, res) => {
       return res
         .status(404)
         .json({ success: false, message: "Entry not found" });
-    res.json({ success: true, data: entry });
+    res.json({
+      success: true,
+      data: entry,
+      message: "Entry updated successfully",
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
