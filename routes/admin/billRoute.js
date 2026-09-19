@@ -1,9 +1,26 @@
 import express from "express";
-import { getMonthlySummary } from "../../controllers/billControllers.js";
+import {
+  exportMonthlyBillExcel,
+  exportMonthlyBreakdownExcel,
+  getMonthDetails,
+  getMonthlyBill,
+  getMonthlyBreakdown,
+  getMonthlySummary,
+  getMonthOverview,
+} from "../../controllers/billControllers.js";
 
 const router = express.Router();
 
 // Add rate
 router.post("/purbali-entries/monthly", getMonthlySummary);
+
+router.get("/entries/month-details", getMonthDetails);
+router.get("/entries/month-overview", getMonthOverview);
+
+router.get("/entries/month-bill", getMonthlyBill);
+router.get("/entries/month-bill/export", exportMonthlyBillExcel);
+
+router.get("/entries/month-breakdown", getMonthlyBreakdown);
+router.get("/entries/month-breakdown/export", exportMonthlyBreakdownExcel);
 
 export default router;
