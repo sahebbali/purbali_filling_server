@@ -182,9 +182,7 @@ function asyncHandler(fn) {
 /* ------------------------------------------------------------------ */
 
 async function fetchEntries(match) {
-  const entries = await PurbaliEntry.find(match)
-    .sort({ date: 1, couponNo: 1 })
-    .lean();
+  const entries = await PurbaliEntry.find(match).sort({ carNo: 1 }).lean();
 
   const totals = entries.reduce(
     (acc, e) => {
@@ -425,6 +423,7 @@ async function fetchOverview(match) {
 
 export const getMonthDetails = asyncHandler(async (req, res) => {
   const match = buildMatch(req.query);
+  // console.log({ match });
   const data = await fetchEntries(match);
   res.json({ success: true, data });
 });
