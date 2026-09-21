@@ -20,15 +20,16 @@ const purbaliRateSchema = new mongoose.Schema(
       required: true,
       min: 0,
     },
+    showInBill: {
+      type: Boolean,
+      default: true,
+    },
   },
   {
     timestamps: true,
-  }
+  },
 );
 
-const PurbaliRate = mongoose.model(
-  "PurbaliRate",
-  purbaliRateSchema
-);
+const PurbaliRate = mongoose.model("PurbaliRate", purbaliRateSchema);
 
 export default PurbaliRate;

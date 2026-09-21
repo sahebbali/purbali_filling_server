@@ -74,7 +74,7 @@ export const updateRate = async (req, res) => {
       {
         new: true,
         runValidators: true,
-      }
+      },
     );
 
     if (!updatedRate) {
@@ -120,5 +120,40 @@ export const deleteRate = async (req, res) => {
       success: false,
       message: error.message,
     });
+  }
+};
+
+export const toggleShowInBill = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { showInBill } = req.body;
+
+    if (typeof showInBill !== "boolean") {
+      return res
+        .status(400)
+        .json({ success: false, message: "showInBill must be true or false" });
+    }
+
+    const updated = await PurbaliRate.findByIdAndUpdate(
+      id,
+      { showInBill },
+      { new: true, runValidators: true },
+    );
+
+    if (!updated) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Rate not found" });
+    }
+
+    return res.status(200).json({ success: true, data: updated });
+  } catch (error) {
+    return res
+      .status(500)
+      .json({
+        success: false,
+        message: "Failed to update visibility",
+        error: error.message,
+      });
   }
 };
