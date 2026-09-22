@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------
 import PurbaliEntry from "../models/PurbaliEntry.js";
 import ExcelJS from "exceljs";
+import PurbaliRate from "../models/purbaliRateModel.js";
 
 const TZ = "Asia/Dhaka"; // group by local month, not UTC
 
@@ -148,18 +149,25 @@ function monthToRange(month) {
     err.status = 400;
     throw err;
   }
+
   const [year, mon] = month.split("-").map(Number);
-  const start = new Date(Date.UTC(year, mon - 1, 1, 0, 0, 0));
-  const end = new Date(Date.UTC(year, mon, 1, 0, 0, 0));
+
+  // Start of the month
+  const start = new Date(Date.UTC(year, mon - 1, 1, 0, 0, 0, 0));
+
+  // Start of the next month
+  const end = new Date(Date.UTC(year, mon, 1, 0, 0, 0, 0));
+
   return { start, end };
 }
 
-function buildMatch({ month, accountNo, carNo, department }) {
+function buildMatch({ month, accountNo, carNo, department, consumptionType }) {
   const { start, end } = monthToRange(month);
   const match = { date: { $gte: start, $lt: end } };
   if (accountNo) match.accountNo = accountNo;
   if (carNo) match.carNo = carNo;
   if (department) match.department = department;
+  if (consumptionType) match.consumptionType = consumptionType;
   return match;
 }
 
@@ -681,6 +689,121 @@ export const exportMonthlyBreakdownExcel = asyncHandler(async (req, res) => {
   await workbook.xlsx.write(res);
   res.end();
 });
+
+export const getItemWiseMonthlyBill = asyncHandler(async (req, res) => {
+  const match = buildMatch(req.query); // reuse your existing date/query builder
+  console.log("Match object for item-wise monthly bill:", match);
+  const bill = await fetchItemWiseBillData(match);
+
+  res.json({
+    success: true,
+    data: { label: monthLabelFromQuery(req.query.month), ...bill },
+  });
+});
+async function fetchItemWiseBillData(match) {
+  // Printable items, in SL NO order. `rate` may be a number or an array.
+  const rateItems = await PurbaliRate.find({ showInBill: true })
+    .sort({ order: 1, createdAt: 1 })
+    .lean();
+
+  // KEY CHANGE: group entries by item id AND rate,
+  // so multiple rates for the same item become multiple rows.
+  const entryTotals = await PurbaliEntry.aggregate([
+    { $match: match },
+    { $unwind: "$items" },
+    {
+      $group: {
+        _id: { id: "$items.id", rate: "$items.rate" },
+        totalQty: { $sum: "$items.qty" },
+        totalAmount: { $sum: "$items.amount" },
+        label: { $first: "$items.label" },
+        unit: { $first: "$items.unit" },
+      },
+    },
+  ]);
+
+  // Map: itemId -> [{ rate, qty, amount, label, unit }, ...]
+  const entriesById = new Map();
+  for (const e of entryTotals) {
+    const id = e._id.id;
+    if (!entriesById.has(id)) entriesById.set(id, []);
+    entriesById.get(id).push({
+      rate: e._id.rate,
+      qty: e.totalQty,
+      amount: e.totalAmount,
+      label: e.label,
+      unit: e.unit,
+    });
+  }
+
+  const rows = [];
+  let slNo = 0;
+  const consumed = new Set();
+
+  // 1) Walk the rate list first (defines SL NO order)
+  for (const item of rateItems) {
+    consumed.add(item.itemId);
+    const entryRates = entriesById.get(item.itemId) || [];
+
+    if (entryRates.length > 0) {
+      // 👉 Rates come from PurbaliEntry first.
+      //    If entries used 145 (and/or 165, ...) we emit one row per rate.
+      for (const e of entryRates) {
+        slNo += 1;
+        rows.push({
+          slNo,
+          itemId: item.itemId,
+          particulars: item.label || e.label,
+          unit: item.unit || e.unit || null,
+          quantity: e.qty > 0 ? e.qty : null, // null -> "-"
+          rate: e.rate ?? item.rate ?? null, // entry rate wins
+          amount: e.amount > 0 ? e.amount : null,
+        });
+      }
+    } else {
+      // No entries yet → fall back to PurbaliRate (single or array of rates)
+      const rates =
+        Array.isArray(item.rate) && item.rate.length > 0
+          ? item.rate
+          : item.rate != null
+          ? [item.rate]
+          : [null];
+
+      for (const r of rates) {
+        slNo += 1;
+        rows.push({
+          slNo,
+          itemId: item.itemId,
+          particulars: item.label,
+          unit: item.unit ?? null,
+          quantity: null, // no qty -> "-"
+          rate: r, // PurbaliRate rate shown
+          amount: null, // no amount -> "-"
+        });
+      }
+    }
+  }
+
+  // 2) Items that only appear in entries (not in PurbaliRate) — still show them
+  for (const [itemId, groups] of entriesById) {
+    if (consumed.has(itemId)) continue;
+    for (const e of groups) {
+      slNo += 1;
+      rows.push({
+        slNo,
+        itemId,
+        particulars: e.label || itemId,
+        unit: e.unit || null,
+        quantity: e.qty > 0 ? e.qty : null,
+        rate: e.rate ?? null,
+        amount: e.amount > 0 ? e.amount : null,
+      });
+    }
+  }
+
+  const totalTaka = rows.reduce((sum, r) => sum + (r.amount || 0), 0);
+  return { rows, totalTaka };
+}
 
 /* ------------------------------------------------------------------ */
 

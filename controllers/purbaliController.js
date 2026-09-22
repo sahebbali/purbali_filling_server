@@ -155,11 +155,19 @@ export const getEntryById = async (req, res) => {
 // @route   PUT /api/purbali-entries/:id
 export const updateEntry = async (req, res) => {
   try {
-    const { date, receivingDate, vehicleNo, couponNo, carNo, items } = req.body;
+    const {
+      date,
+      receivingDate,
+      vehicleNo,
+      couponNo,
+      carNo,
+      items,
+      totalAmount,
+    } = req.body;
 
     const entry = await PurbaliEntry.findByIdAndUpdate(
       req.params.id,
-      { date, receivingDate, vehicleNo, couponNo, carNo, items },
+      { date, receivingDate, vehicleNo, couponNo, carNo, items, totalAmount },
       { new: true, runValidators: true },
     );
 

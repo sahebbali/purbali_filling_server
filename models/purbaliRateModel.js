@@ -20,9 +20,15 @@ const purbaliRateSchema = new mongoose.Schema(
       required: true,
       min: 0,
     },
+    unit: {
+      type: String,
+      enum: ["Litre", "Pcs"],
+      default: "Pcs",
+    },
+    order: { type: Number, default: 0 },
     showInBill: {
       type: Boolean,
-      default: true,
+      default: false,
     },
   },
   {
