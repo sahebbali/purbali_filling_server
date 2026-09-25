@@ -4,6 +4,7 @@
 import PurbaliEntry from "../models/PurbaliEntry.js";
 import ExcelJS from "exceljs";
 import PurbaliRate from "../models/purbaliRateModel.js";
+import Account from "../models/accountInfo.js";
 
 const TZ = "Asia/Dhaka"; // group by local month, not UTC
 
@@ -165,9 +166,23 @@ function buildMatch({ month, accountNo, carNo, department, consumptionType }) {
   const { start, end } = monthToRange(month);
   const match = { date: { $gte: start, $lt: end } };
   if (accountNo) match.accountNo = accountNo;
-  if (carNo) match.carNo = carNo;
+
   if (department) match.department = department;
   if (consumptionType) match.consumptionType = consumptionType;
+
+  if (carNo) {
+    const carNos = carNo
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    if (carNos.length === 1) {
+      match.carNo = carNos[0];
+    } else if (carNos.length > 1) {
+      match.carNo = { $in: carNos };
+    }
+  }
+
   return match;
 }
 
@@ -705,7 +720,6 @@ async function fetchItemWiseBillData(match) {
   const rateItems = await PurbaliRate.find({ showInBill: true })
     .sort({ order: 1, createdAt: 1 })
     .lean();
-
   // KEY CHANGE: group entries by item id AND rate,
   // so multiple rates for the same item become multiple rows.
   const entryTotals = await PurbaliEntry.aggregate([
@@ -813,4 +827,130 @@ function purbaliErrorHandler(err, req, res, next) {
   res
     .status(status)
     .json({ success: false, message: err.message || "Server error" });
+}
+
+export const getMonthlySummaryMatrix = async (req, res) => {
+  try {
+    const { accountNo, month } = req.query;
+    if (!accountNo) {
+      return res
+        .status(400)
+        .json({ success: false, message: "accountNo is required" });
+    }
+
+    const match = buildMatch(req.query);
+    const { itemColumns, rows, totals } = await fetchVehicleItemMatrix(match);
+
+    // Adjust to however you currently look up an account's display name
+    const account = await Account.findOne({ ac_no: accountNo }).lean();
+
+    res.json({
+      success: true,
+      data: {
+        accountNo,
+        accountName: account?.name ?? "",
+        month,
+        itemColumns,
+        rows,
+        totals,
+      },
+    });
+  } catch (err) {
+    console.error("monthly-summary-matrix failed:", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to build summary matrix" });
+  }
+};
+
+// purbaliSummaryMatrix.js
+
+/**
+ * Full vehicle list for an account. TODO: replace with your real vehicle/car
+ * master collection if you have one, e.g.:
+ *   PurbaliVehicle.find({ accountNo }).sort({ carNo: 1 }).lean()
+ * For now this derives it from every carNo ever billed under this account,
+ * across all time (not just the selected month) — that's the only way to
+ * reproduce vehicles that show "-" for a month with no activity.
+ */
+async function getAccountVehicleNumbers(accountNo) {
+  const carNos = await PurbaliEntry.distinct("carNo", { accountNo });
+  return carNos.filter(Boolean).sort((a, b) => (a > b ? 1 : a < b ? -1 : 0));
+}
+
+/**
+ * Builds the vehicle x item quantity/amount matrix for the "Total Summary"
+ * report. `match` should come from buildPurbaliMatch() and must include
+ * accountNo (this report is always scoped to a single account).
+ */
+async function fetchVehicleItemMatrix(match) {
+  const { accountNo } = match;
+  if (!accountNo) {
+    throw new Error("fetchVehicleItemMatrix requires accountNo in match");
+  }
+
+  const [rateItems, vehicleNumbers, entryTotals] = await Promise.all([
+    PurbaliRate.find({ showInBill: true })
+      .sort({ order: 1, createdAt: 1 })
+      .lean(),
+    getAccountVehicleNumbers(accountNo),
+    PurbaliEntry.aggregate([
+      { $match: match },
+      { $unwind: "$items" },
+      {
+        $group: {
+          _id: { carNo: "$carNo", itemId: "$items.id" },
+          qty: { $sum: "$items.qty" },
+          amount: { $sum: "$items.amount" },
+        },
+      },
+    ]),
+  ]);
+
+  // Column order = PurbaliRate order, same as the itemized bill
+  const itemColumns = rateItems.map((item) => ({
+    itemId: item.itemId,
+    label: item.label,
+    unit: item.unit ?? null,
+    rate: Array.isArray(item.rate) ? item.rate[0] ?? null : item.rate ?? null,
+  }));
+  const itemIds = itemColumns.map((c) => c.itemId);
+
+  // carNo -> itemId -> { qty, amount }
+  const byCar = new Map();
+  for (const e of entryTotals) {
+    const { carNo, itemId } = e._id;
+    if (!byCar.has(carNo)) byCar.set(carNo, {});
+    byCar.get(carNo)[itemId] = { qty: e.qty, amount: e.amount };
+  }
+
+  const rows = vehicleNumbers.map((carNo, idx) => {
+    const cells = byCar.get(carNo) || {};
+    const values = {};
+    let rowAmount = 0;
+    for (const itemId of itemIds) {
+      const cell = cells[itemId];
+      values[itemId] = cell?.qty || null; // 0/undefined -> null -> renders as "-"
+      rowAmount += cell?.amount || 0;
+    }
+    return {
+      slNo: idx + 1,
+      vehicleNumber: carNo,
+      values,
+      amount: rowAmount || null,
+    };
+  });
+
+  const totalValues = {};
+  for (const itemId of itemIds) {
+    const sum = rows.reduce((s, r) => s + (r.values[itemId] || 0), 0);
+    totalValues[itemId] = sum || null;
+  }
+  const totalAmount = rows.reduce((s, r) => s + (r.amount || 0), 0);
+
+  return {
+    itemColumns,
+    rows,
+    totals: { values: totalValues, amount: totalAmount },
+  };
 }

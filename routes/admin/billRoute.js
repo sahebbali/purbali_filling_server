@@ -7,6 +7,7 @@ import {
   getMonthlyBill,
   getMonthlyBreakdown,
   getMonthlySummary,
+  getMonthlySummaryMatrix,
   getMonthOverview,
 } from "../../controllers/billControllers.js";
 
@@ -23,5 +24,7 @@ router.get("/entries/month-bill/export", exportMonthlyBillExcel);
 
 router.get("/entries/month-breakdown", getMonthlyBreakdown);
 router.get("/entries/month-breakdown/export", exportMonthlyBreakdownExcel);
+
+router.get("/purbali/monthly-summary-matrix", getMonthlySummaryMatrix);
 
 export default router;
