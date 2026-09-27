@@ -253,7 +253,7 @@ async function fetchBillData(match) {
         _id: "$accountNo",
         items: { $push: "$item" },
         totalQty: { $sum: "$item.qty" },
-        totalAmount: { $sum: "$item.amount" },
+        totalAmount: { $sum: "$item.totalAmount" },
       },
     },
     { $sort: { _id: 1 } },
@@ -329,6 +329,39 @@ async function fetchBreakdownData(match) {
       { $sort: { key: 1 } },
     ]);
 
+  // NEW: per-item totals (unwind the items array and group by item id)
+
+  const byItemPipeline = PurbaliEntry.aggregate([
+    { $match: match },
+    { $unwind: "$items" },
+    {
+      $addFields: {
+        "items.normId": {
+          $toLower: { $trim: { input: { $ifNull: ["$items.id", ""] } } },
+        },
+      },
+    },
+    {
+      $group: {
+        _id: "$items.normId",
+        label: { $first: "$items.label" },
+        totalQty: { $sum: { $ifNull: ["$items.qty", 0] } },
+        totalAmount: { $sum: { $ifNull: ["$items.amount", 0] } },
+        entryCount: { $sum: 1 },
+      },
+    },
+    {
+      $project: {
+        _id: 0,
+        key: "$_id",
+        label: 1,
+        totalQty: 1,
+        totalAmount: 1,
+        entryCount: 1,
+      },
+    },
+    { $sort: { key: 1 } },
+  ]);
   const totalsPipeline = PurbaliEntry.aggregate([
     { $match: match },
     {
@@ -365,15 +398,23 @@ async function fetchBreakdownData(match) {
     },
   ]);
 
-  const [byDay, byAccount, byCar, byConsumptionType, byDepartment, totalsAgg] =
-    await Promise.all([
-      groupBy("$dayKey"),
-      groupBy("$accountNo"),
-      groupBy({ $ifNull: ["$carNo", "—"] }),
-      groupBy({ $ifNull: ["$consumptionType", "—"] }),
-      groupBy({ $ifNull: ["$department", "—"] }),
-      totalsPipeline,
-    ]);
+  const [
+    byDay,
+    byAccount,
+    byCar,
+    byConsumptionType,
+    byDepartment,
+    byItem,
+    totalsAgg,
+  ] = await Promise.all([
+    groupBy("$dayKey"),
+    groupBy("$accountNo"),
+    groupBy({ $ifNull: ["$carNo", "—"] }),
+    groupBy({ $ifNull: ["$consumptionType", "—"] }),
+    groupBy({ $ifNull: ["$department", "—"] }),
+    byItemPipeline,
+    totalsPipeline,
+  ]);
 
   return {
     totals: totalsAgg[0] || {
@@ -387,6 +428,7 @@ async function fetchBreakdownData(match) {
     byCar,
     byConsumptionType,
     byDepartment,
+    byItem, // e.g. [{ key: "diesel", label: "Diesel", totalQty: 39, totalAmount: 4485, entryCount: 12 }, ...]
   };
 }
 
