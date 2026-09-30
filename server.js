@@ -17,6 +17,7 @@ import { initCloudinary } from "./utils/cloudinary.js";
 import connectDB from "./db-config/db.js";
 import { seedAccounts } from "./seed/seedAccounts.js";
 import { seedRateManager } from "./seed/rateManager.js";
+import { seedPurchaseRate } from "./seed/PurchaseRate.js";
 
 const app = express();
 
@@ -56,6 +57,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/uploads", express.static(path.join(__dirname, "public/uploads")));
 
 initCloudinary();
+// seedPurchaseRate();
 // Ensure MongoDB is connected before handling any route
 app.use(async (req, res, next) => {
   try {

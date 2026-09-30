@@ -60,7 +60,28 @@ const LineSchema = new Schema(
 /* --------------------------------
    Account Schema
 --------------------------------- */
+const rate = { type: Number, default: 0, min: 0 };
 
+const PurchaseRateSchema = new Schema(
+  {
+    octane: rate,
+    diesel: rate,
+    looseMobile: rate,
+    tq1: rate, // T.Q-1
+    tq5: rate, // T.Q-5
+    brakeOil: rate,
+    powerOil: rate,
+    gearOil: rate,
+    qw: rate,
+    af: rate,
+    mf: rate,
+    pf: rate,
+    df: rate,
+    af2: rate, // second "A.F" in your list
+    servicing: rate,
+  },
+  { _id: false },
+);
 const AccountSchema = new Schema(
   {
     // Matches numeric _id from accounts.json
@@ -114,6 +135,11 @@ const AccountSchema = new Schema(
     lines: {
       type: [LineSchema],
       default: [],
+    },
+
+    purchase_rates: {
+      type: PurchaseRateSchema,
+      default: () => ({}), // every rate defaults to 0
     },
   },
   {
