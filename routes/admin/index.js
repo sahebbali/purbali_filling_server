@@ -9,6 +9,7 @@ import purbaliRateRoutes from "./purbaliRateRoute.js";
 import accountRoute from "./accountInfoRoute.js";
 import billRoute from "./billRoute.js";
 import reportRoutes from "./report.js";
+import PurchaseRoutes from "./purchaseRoute.js";
 
 const router = express.Router();
 const middleware = [verifyJWT, verifyAdmin];
@@ -21,4 +22,5 @@ router.use(purbaliRoutes);
 router.use(purbaliRateRoutes);
 router.use(accountRoute);
 router.use(billRoute);
+router.use(PurchaseRoutes);
 export default router;

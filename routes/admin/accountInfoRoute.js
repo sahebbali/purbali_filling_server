@@ -11,7 +11,7 @@ import {
   patchAc,
   updatePurchaseRates,
   getAllAccounts,
-} from "../../controllers/purchaseRateController.js";
+} from "../../controllers/purchaseController.js";
 
 const router = express.Router();
 

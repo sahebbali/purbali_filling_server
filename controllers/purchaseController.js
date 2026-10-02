@@ -2,8 +2,7 @@
 import express from "express";
 import mongoose from "mongoose";
 import Account from "../models/accountInfo.js";
-
-const router = express.Router();
+import Purchase, { ITEMS, PurchaseRate } from "../models/PurchaseRate.js";
 
 /* ------------------------------------------------------------------
    Helpers
@@ -314,3 +313,213 @@ export const delAc = async (req, res, next) => {
     next(err);
   }
 };
+
+// controllers/purchaseController.js
+
+export const asyncHandler = (fn) => (req, res, next) =>
+  Promise.resolve(fn(req, res, next)).catch(next);
+
+const httpError = (status, message) => {
+  const err = new Error(message);
+  err.status = status;
+  return err;
+};
+
+const pick = (obj, keys) =>
+  Object.fromEntries(
+    keys.filter((k) => obj[k] !== undefined).map((k) => [k, obj[k]]),
+  );
+
+// Build line items from either:
+//  - items: [{ item, qty, rate? }]  (rate falls back to the account's rate card)
+//  - quantities: { octane: 50, diesel: 30 }  (rates come from the rate card)
+const buildItems = async (accountNo, body) => {
+  const card = await PurchaseRate.findOne({ accountNo });
+
+  if (body.quantities) {
+    if (!card)
+      throw httpError(404, `No rate card found for account ${accountNo}`);
+    return card.toLineItems(body.quantities);
+  }
+
+  if (Array.isArray(body.items)) {
+    return body.items.map((l) => {
+      if (!ITEMS.includes(l.item))
+        throw httpError(400, `Unknown item: ${l.item}`);
+      const rate = l.rate ?? card?.[l.item];
+      if (rate === undefined) {
+        throw httpError(
+          400,
+          `No rate for "${l.item}". Send a rate or create a rate card.`,
+        );
+      }
+      return { item: l.item, qty: l.qty, rate };
+    });
+  }
+
+  throw httpError(400, "Send either `quantities` or `items`");
+};
+
+/* ------------------------------------------------------------------ */
+/* Purchases                                                           */
+/* ------------------------------------------------------------------ */
+
+// POST /api/purchases
+export const createPurchase = asyncHandler(async (req, res) => {
+  const { accountNo } = req.body;
+  if (!accountNo) throw httpError(400, "accountNo is required");
+
+  const items = await buildItems(accountNo, req.body);
+  const purchase = await Purchase.create({
+    ...pick(req.body, ["accountNo", "date", "discount", "paid", "note"]),
+    items,
+  });
+
+  res.status(201).json({ success: true, data: purchase });
+});
+
+// GET /api/purchases?accountNo=&status=&from=&to=&page=&limit=
+export const getPurchases = asyncHandler(async (req, res) => {
+  const { accountNo, status, from, to } = req.query;
+  const page = Math.max(parseInt(req.query.page) || 1, 1);
+  const limit = Math.min(Math.max(parseInt(req.query.limit) || 20, 1), 100);
+
+  const filter = {};
+  if (accountNo) filter.accountNo = accountNo;
+  if (status) filter.status = status;
+  if (from || to) {
+    filter.date = {};
+    if (from) filter.date.$gte = new Date(from);
+    if (to) filter.date.$lte = new Date(to);
+  }
+
+  const [data, total] = await Promise.all([
+    Purchase.find(filter)
+      .sort({ date: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit),
+    Purchase.countDocuments(filter),
+  ]);
+
+  res.json({
+    success: true,
+    data,
+    pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+  });
+});
+
+// GET /api/purchases/summary/:accountNo?from=&to=
+export const getAccountSummary = asyncHandler(async (req, res) => {
+  const from = req.query.from ? new Date(req.query.from) : undefined;
+  const to = req.query.to ? new Date(req.query.to) : undefined;
+  const [summary] = await Purchase.accountSummary(
+    req.params.accountNo,
+    from,
+    to,
+  );
+
+  res.json({
+    success: true,
+    data: summary || {
+      _id: req.params.accountNo,
+      bills: 0,
+      total: 0,
+      paid: 0,
+      due: 0,
+    },
+  });
+});
+
+// GET /api/purchases/:id
+export const getPurchase = asyncHandler(async (req, res) => {
+  const purchase = await Purchase.findById(req.params.id);
+  if (!purchase) throw httpError(404, "Purchase not found");
+  res.json({ success: true, data: purchase, byItem: purchase.totalsByItem() });
+});
+
+// PUT /api/purchases/:id
+// Load -> modify -> save() so the pre-validate hook recomputes totals.
+export const updatePurchase = asyncHandler(async (req, res) => {
+  const purchase = await Purchase.findById(req.params.id);
+  if (!purchase) throw httpError(404, "Purchase not found");
+
+  purchase.set(pick(req.body, ["date", "discount", "paid", "note"]));
+
+  if (req.body.items || req.body.quantities) {
+    purchase.items = await buildItems(purchase.accountNo, req.body);
+  }
+
+  await purchase.save();
+  res.json({ success: true, data: purchase });
+});
+
+// PATCH /api/purchases/:id/pay   body: { amount }
+export const addPayment = asyncHandler(async (req, res) => {
+  const amount = Number(req.body.amount);
+  if (!(amount > 0)) throw httpError(400, "amount must be greater than 0");
+
+  const purchase = await Purchase.findById(req.params.id);
+  if (!purchase) throw httpError(404, "Purchase not found");
+
+  purchase.paid += amount;
+  await purchase.save();
+  res.json({ success: true, data: purchase });
+});
+
+// DELETE /api/purchases/:id
+export const deletePurchase = asyncHandler(async (req, res) => {
+  const purchase = await Purchase.findByIdAndDelete(req.params.id);
+  if (!purchase) throw httpError(404, "Purchase not found");
+  res.json({ success: true, message: "Purchase deleted" });
+});
+
+/* ------------------------------------------------------------------ */
+/* Rate cards                                                          */
+/* ------------------------------------------------------------------ */
+
+const RATE_FIELDS = ["accountNo", "name", ...ITEMS];
+
+// POST /api/rates
+export const createRate = asyncHandler(async (req, res) => {
+  const rate = await PurchaseRate.create(pick(req.body, RATE_FIELDS));
+  res.status(201).json({ success: true, data: rate });
+});
+
+// GET /api/rates?search=
+export const getRates = asyncHandler(async (req, res) => {
+  const filter = {};
+  if (req.query.search) {
+    const rx = new RegExp(
+      req.query.search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+      "i",
+    );
+    filter.$or = [{ accountNo: rx }, { name: rx }];
+  }
+  const data = await PurchaseRate.find(filter).sort({ accountNo: 1 });
+  res.json({ success: true, data });
+});
+
+// GET /api/rates/:id
+export const getRate = asyncHandler(async (req, res) => {
+  const rate = await PurchaseRate.findById(req.params.id);
+  if (!rate) throw httpError(404, "Rate card not found");
+  res.json({ success: true, data: rate });
+});
+
+// PUT /api/rates/:id  (only affects future bills; old bills keep snapshot rates)
+export const updateRate = asyncHandler(async (req, res) => {
+  const rate = await PurchaseRate.findByIdAndUpdate(
+    req.params.id,
+    pick(req.body, RATE_FIELDS),
+    { new: true, runValidators: true },
+  );
+  if (!rate) throw httpError(404, "Rate card not found");
+  res.json({ success: true, data: rate });
+});
+
+// DELETE /api/rates/:id
+export const deleteRate = asyncHandler(async (req, res) => {
+  const rate = await PurchaseRate.findByIdAndDelete(req.params.id);
+  if (!rate) throw httpError(404, "Rate card not found");
+  res.json({ success: true, message: "Rate card deleted" });
+});
