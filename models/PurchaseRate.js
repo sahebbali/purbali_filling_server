@@ -94,7 +94,7 @@ PurchaseSchema.pre("validate", function (next) {
   });
 
   this.subtotal = round2(this.items.reduce((s, l) => s + l.amount, 0));
-  this.total = round2(Math.max(this.subtotal - this.discount, 0));
+  this.total = this.subtotal;
 
   next();
 });

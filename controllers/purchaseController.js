@@ -366,13 +366,15 @@ const buildItems = async (accountNo, body) => {
 
 // POST /api/purchases
 export const createPurchase = asyncHandler(async (req, res) => {
-  const { accountNo } = req.body;
+  const { accountNo, total } = req.body;
+  console.log(req.body);
   if (!accountNo) throw httpError(400, "accountNo is required");
 
   const items = await buildItems(accountNo, req.body);
   const purchase = await Purchase.create({
-    ...pick(req.body, ["accountNo", "date", "discount", "paid", "note"]),
+    ...pick(req.body, ["accountNo", "couponNo", "date", "note"]),
     items,
+    total,
   });
 
   res.status(201).json({ success: true, data: purchase });
