@@ -1,8 +1,10 @@
-// routes/accounts.js
-import express from "express";
-import mongoose from "mongoose";
 import Account from "../models/accountInfo.js";
-import Purchase, { ITEMS, PurchaseRate } from "../models/PurchaseRate.js";
+import {
+  Purchase,
+  PurchaseRate,
+  PRODUCT_ITEMS,
+  CHARGE_ITEMS,
+} from "../models/purchaseRate.js";
 
 /* ------------------------------------------------------------------
    Helpers
@@ -333,31 +335,72 @@ const pick = (obj, keys) =>
 // Build line items from either:
 //  - items: [{ item, qty, rate? }]  (rate falls back to the account's rate card)
 //  - quantities: { octane: 50, diesel: 30 }  (rates come from the rate card)
-const buildItems = async (accountNo, body) => {
-  const card = await PurchaseRate.findOne({ accountNo });
 
-  if (body.quantities) {
+/* ------------------------------------------------------------------ */
+/* Builders                                                            */
+/* ------------------------------------------------------------------ */
+
+// qty x rate lines. Accepts either:
+//   { quantities: { octane: 50 }, rates: { octane: 130 } }   (rates optional)
+//   { items: [{ item: "octane", qty: 50, rate: 130 }] }      (rate optional)
+// Returns [] when neither has anything (charges-only purchase).
+const buildItems = async (accountNo, body) => {
+  const { quantities, rates, items } = body;
+
+  // 1) quantities map (used by the AddPurchase form)
+  const hasQty =
+    quantities &&
+    typeof quantities === "object" &&
+    Object.values(quantities).some((q) => Number(q) > 0);
+
+  if (hasQty) {
+    const card = await PurchaseRate.findOne({ accountNo });
     if (!card)
       throw httpError(404, `No rate card found for account ${accountNo}`);
-    return card.toLineItems(body.quantities);
+
+    const lines = card.toLineItems(quantities, rates);
+    if (lines.some((l) => !(Number(l.rate) > 0))) {
+      throw httpError(400, "Every item needs a rate greater than 0");
+    }
+    return lines;
   }
 
-  if (Array.isArray(body.items)) {
-    return body.items.map((l) => {
-      if (!ITEMS.includes(l.item))
+  // 2) explicit items array
+  if (Array.isArray(items) && items.length > 0) {
+    const needsCard = items.some((l) => l.rate === undefined || l.rate === "");
+    const card = needsCard ? await PurchaseRate.findOne({ accountNo }) : null;
+
+    return items.map((l) => {
+      if (!PRODUCT_ITEMS.includes(l.item))
         throw httpError(400, `Unknown item: ${l.item}`);
-      const rate = l.rate ?? card?.[l.item];
-      if (rate === undefined) {
+
+      const qty = Number(l.qty);
+      if (!(qty > 0))
+        throw httpError(400, `Quantity for "${l.item}" must be greater than 0`);
+
+      const rate =
+        l.rate !== undefined && l.rate !== "" ? Number(l.rate) : card?.[l.item];
+      if (!(Number(rate) > 0)) {
         throw httpError(
           400,
           `No rate for "${l.item}". Send a rate or create a rate card.`,
         );
       }
-      return { item: l.item, qty: l.qty, rate };
+
+      return { item: l.item, qty, rate: Number(rate) };
     });
   }
 
-  throw httpError(400, "Send either `quantities` or `items`");
+  return []; // nothing here, charges may still be present
+};
+
+// Amount-only lines: { af: 500, servicing: 300, others: 100 }
+const buildCharges = (charges = {}) => {
+  if (!charges || typeof charges !== "object") return [];
+
+  return Object.entries(charges)
+    .filter(([key, amt]) => CHARGE_ITEMS.includes(key) && Number(amt) > 0)
+    .map(([key, amt]) => ({ key, amount: Number(amt) }));
 };
 
 /* ------------------------------------------------------------------ */
@@ -366,15 +409,22 @@ const buildItems = async (accountNo, body) => {
 
 // POST /api/purchases
 export const createPurchase = asyncHandler(async (req, res) => {
-  const { accountNo, total } = req.body;
-  console.log(req.body);
+  const { accountNo } = req.body;
   if (!accountNo) throw httpError(400, "accountNo is required");
 
   const items = await buildItems(accountNo, req.body);
+  const charges = buildCharges(req.body.charges);
+
+  if (items.length === 0 && charges.length === 0) {
+    throw httpError(400, "Add at least one item or charge");
+  }
+
+  // total, itemsTotal and chargesTotal are computed by the model's
+  // pre("validate") hook, so any `total` sent by the client is ignored.
   const purchase = await Purchase.create({
     ...pick(req.body, ["accountNo", "couponNo", "date", "note"]),
     items,
-    total,
+    charges,
   });
 
   res.status(201).json({ success: true, data: purchase });
@@ -475,53 +525,130 @@ export const deletePurchase = asyncHandler(async (req, res) => {
   res.json({ success: true, message: "Purchase deleted" });
 });
 
-/* ------------------------------------------------------------------ */
-/* Rate cards                                                          */
-/* ------------------------------------------------------------------ */
+const TZ = "Asia/Dhaka";
+const dayStart = (d) => new Date(`${d}T00:00:00.000+06:00`);
+const dayEnd = (d) => new Date(`${d}T23:59:59.999+06:00`);
 
-const RATE_FIELDS = ["accountNo", "name", ...ITEMS];
-
-// POST /api/rates
-export const createRate = asyncHandler(async (req, res) => {
-  const rate = await PurchaseRate.create(pick(req.body, RATE_FIELDS));
-  res.status(201).json({ success: true, data: rate });
+const pageOpts = (q) => {
+  const page = Math.max(parseInt(q.page) || 1, 1);
+  const limit = Math.min(parseInt(q.limit) || 15, 100);
+  return { page, limit, skip: (page - 1) * limit };
+};
+const pagination = (page, limit, total) => ({
+  page,
+  limit,
+  total,
+  pages: Math.ceil(total / limit) || 1,
 });
 
-// GET /api/rates?search=
-export const getRates = asyncHandler(async (req, res) => {
-  const filter = {};
-  if (req.query.search) {
-    const rx = new RegExp(
-      req.query.search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-      "i",
-    );
-    filter.$or = [{ accountNo: rx }, { name: rx }];
+/* ---------- API 1: daily summary (one row per date) ---------- */
+export const dailyReport = async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    const { page, limit, skip } = pageOpts(req.query);
+
+    const match = {};
+    if (from || to) {
+      match.date = {};
+      if (from) match.date.$gte = dayStart(from);
+      if (to) match.date.$lte = dayEnd(to);
+    }
+
+    const [r] = await Purchase.aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: {
+            $dateToString: { format: "%Y-%m-%d", date: "$date", timezone: TZ },
+          },
+          bills: { $sum: 1 },
+          subtotal: { $sum: "$subtotal" },
+          discount: { $sum: "$discount" },
+          total: { $sum: "$total" },
+          paid: { $sum: "$paid" },
+          due: { $sum: "$due" },
+        },
+      },
+      { $sort: { _id: -1 } },
+      {
+        $facet: {
+          rows: [{ $skip: skip }, { $limit: limit }],
+          count: [{ $count: "n" }],
+          grand: [
+            {
+              $group: {
+                _id: null,
+                bills: { $sum: "$bills" },
+                subtotal: { $sum: "$subtotal" },
+                discount: { $sum: "$discount" },
+                total: { $sum: "$total" },
+                paid: { $sum: "$paid" },
+                due: { $sum: "$due" },
+              },
+            },
+          ],
+        },
+      },
+    ]);
+
+    const total = r.count[0]?.n ?? 0;
+    res.json({
+      data: r.rows.map(({ _id, ...rest }) => ({ date: _id, ...rest })),
+      summary: r.grand[0] ?? {
+        bills: 0,
+        subtotal: 0,
+        discount: 0,
+        total: 0,
+        paid: 0,
+        due: 0,
+      },
+      pagination: pagination(page, limit, total),
+    });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
   }
-  const data = await PurchaseRate.find(filter).sort({ accountNo: 1 });
-  res.json({ success: true, data });
-});
+};
 
-// GET /api/rates/:id
-export const getRate = asyncHandler(async (req, res) => {
-  const rate = await PurchaseRate.findById(req.params.id);
-  if (!rate) throw httpError(404, "Rate card not found");
-  res.json({ success: true, data: rate });
-});
+/* ---------- API 2: purchases of one date ---------- */
+export const dayPurchases = async (req, res) => {
+  try {
+    const { date } = req.query;
+    if (!date)
+      return res.status(400).json({ message: "date is required (YYYY-MM-DD)" });
+    const { page, limit, skip } = pageOpts(req.query);
 
-// PUT /api/rates/:id  (only affects future bills; old bills keep snapshot rates)
-export const updateRate = asyncHandler(async (req, res) => {
-  const rate = await PurchaseRate.findByIdAndUpdate(
-    req.params.id,
-    pick(req.body, RATE_FIELDS),
-    { new: true, runValidators: true },
-  );
-  if (!rate) throw httpError(404, "Rate card not found");
-  res.json({ success: true, data: rate });
-});
+    const match = { date: { $gte: dayStart(date), $lte: dayEnd(date) } };
 
-// DELETE /api/rates/:id
-export const deleteRate = asyncHandler(async (req, res) => {
-  const rate = await PurchaseRate.findByIdAndDelete(req.params.id);
-  if (!rate) throw httpError(404, "Rate card not found");
-  res.json({ success: true, message: "Rate card deleted" });
-});
+    const [rows, total, sums] = await Promise.all([
+      Purchase.find(match).sort({ date: -1 }).skip(skip).limit(limit).lean(),
+      Purchase.countDocuments(match),
+      Purchase.aggregate([
+        { $match: match },
+        {
+          $group: {
+            _id: null,
+            subtotal: { $sum: "$subtotal" },
+            discount: { $sum: "$discount" },
+            total: { $sum: "$total" },
+            paid: { $sum: "$paid" },
+            due: { $sum: "$due" },
+          },
+        },
+      ]),
+    ]);
+
+    res.json({
+      data: rows,
+      summary: sums[0] ?? {
+        subtotal: 0,
+        discount: 0,
+        total: 0,
+        paid: 0,
+        due: 0,
+      },
+      pagination: pagination(page, limit, total),
+    });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
