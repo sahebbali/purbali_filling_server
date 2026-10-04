@@ -874,6 +874,7 @@ function purbaliErrorHandler(err, req, res, next) {
 export const getMonthlySummaryMatrix = async (req, res) => {
   try {
     const { accountNo, month } = req.query;
+    console.log("getMonthlySummaryMatrix called with:", req.query);
     if (!accountNo) {
       return res
         .status(400)
@@ -926,9 +927,15 @@ async function getAccountVehicleNumbers(accountNo) {
  * accountNo (this report is always scoped to a single account).
  */
 async function fetchVehicleItemMatrix(match) {
-  const { accountNo } = match;
+  const { accountNo, consumptionType, ...rest } = match;
   if (!accountNo) {
     throw new Error("fetchVehicleItemMatrix requires accountNo in match");
+  }
+
+  // drop empty-string filters ('' carNo / department etc.)
+  const baseMatch = { accountNo };
+  for (const [k, v] of Object.entries(rest)) {
+    if (v !== "" && v != null) baseMatch[k] = v;
   }
 
   const [rateItems, vehicleNumbers, entryTotals] = await Promise.all([
@@ -937,8 +944,11 @@ async function fetchVehicleItemMatrix(match) {
       .lean(),
     getAccountVehicleNumbers(accountNo),
     PurbaliEntry.aggregate([
-      { $match: match },
+      { $match: baseMatch },
       { $unwind: "$items" },
+      ...(consumptionType
+        ? [{ $match: { "items.consumptionType": consumptionType } }]
+        : []),
       {
         $group: {
           _id: { carNo: "$carNo", itemId: "$items.id" },
@@ -949,7 +959,6 @@ async function fetchVehicleItemMatrix(match) {
     ]),
   ]);
 
-  // Column order = PurbaliRate order, same as the itemized bill
   const itemColumns = rateItems.map((item) => ({
     itemId: item.itemId,
     label: item.label,
@@ -958,26 +967,34 @@ async function fetchVehicleItemMatrix(match) {
   }));
   const itemIds = itemColumns.map((c) => c.itemId);
 
-  // carNo -> itemId -> { qty, amount }
+  // carNo -> itemId -> { qty, amount } (summed, not overwritten)
   const byCar = new Map();
   for (const e of entryTotals) {
-    const { carNo, itemId } = e._id;
+    const carNo = e._id.carNo || "";
+    const itemId = e._id.itemId;
     if (!byCar.has(carNo)) byCar.set(carNo, {});
-    byCar.get(carNo)[itemId] = { qty: e.qty, amount: e.amount };
+    const cell = (byCar.get(carNo)[itemId] ??= { qty: 0, amount: 0 });
+    cell.qty += e.qty || 0;
+    cell.amount += e.amount || 0;
   }
 
-  const rows = vehicleNumbers.map((carNo, idx) => {
+  // vehicle list + any carNo that has data but isn't a registered vehicle
+  const known = new Set(vehicleNumbers);
+  const extraCars = [...byCar.keys()].filter((c) => !known.has(c));
+  const allCars = [...vehicleNumbers, ...extraCars];
+
+  const rows = allCars.map((carNo, idx) => {
     const cells = byCar.get(carNo) || {};
     const values = {};
     let rowAmount = 0;
     for (const itemId of itemIds) {
       const cell = cells[itemId];
-      values[itemId] = cell?.qty || null; // 0/undefined -> null -> renders as "-"
+      values[itemId] = cell?.qty || null;
       rowAmount += cell?.amount || 0;
     }
     return {
       slNo: idx + 1,
-      vehicleNumber: carNo,
+      vehicleNumber: carNo || consumptionType || "—", // blank carNo -> "Generator"
       values,
       amount: rowAmount || null,
     };

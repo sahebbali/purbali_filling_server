@@ -55,9 +55,3 @@ router.get("/purchases/report/daily", dailyReport);
 router.get("/purchases/report/day", dayPurchases);
 
 export default router;
-
-/* Mount in your app:
-   import purchaseRoutes from "./routes/purchaseRoutes.js";
-   app.use(express.json());
-   app.use("/api", purchaseRoutes);
-*/
