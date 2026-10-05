@@ -4,7 +4,7 @@ import {
   PurchaseRate,
   PRODUCT_ITEMS,
   CHARGE_ITEMS,
-} from "../models/purchaseRate.js";
+} from "../models/PurchaseRate.js";
 
 /* ------------------------------------------------------------------
    Helpers
