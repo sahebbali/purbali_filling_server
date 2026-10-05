@@ -6,6 +6,7 @@ import dns from "dns";
 import path from "path";
 import cors from "cors";
 import { fileURLToPath } from "url";
+
 import { connA } from "./db-config/db-conn.js";
 import authRoute from "./routes/auth.js";
 import publicRoute from "./routes/public.js";
@@ -15,16 +16,18 @@ import userProtectedRoute from "./routes/user/index.js";
 import { initCloudinary } from "./utils/cloudinary.js";
 
 import connectDB from "./db-config/db.js";
-import { seedAccounts } from "./seed/seedAccounts.js";
 import { seedRateManager } from "./seed/rateManager.js";
-import { seedPurchaseRate } from "./seed/PurchaseRate.js";
 
 const app = express();
 
-// Handle __dirname in ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-dns.setServers(["8.8.8.8", "1.1.1.1", "0.0.0.0"]);
+
+dns.setServers(["8.8.8.8", "1.1.1.1"]);
+
+/* =========================
+   CORS
+========================= */
 
 const allowedOrigins = [
   "http://localhost:3000",
@@ -34,47 +37,87 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      console.warn("CORS Blocked Origin:", origin);
-      callback(new Error("Not allowed by CORS"));
+    // Allow requests without Origin header
+    // e.g. Postman, curl, server-to-server
+    if (!origin) {
+      return callback(null, true);
     }
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    console.warn("CORS Blocked Origin:", origin);
+
+    return callback(new Error(`CORS blocked: ${origin}`));
   },
+
   credentials: true,
+
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+
   allowedHeaders: ["Content-Type", "Authorization"],
+
+  optionsSuccessStatus: 204,
 };
+
+/* =========================
+   Database
+========================= */
+
 connectDB();
+
+/* =========================
+   CORS MUST COME BEFORE ROUTES
+========================= */
+
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions), (req, res) => {
-  res.sendStatus(200);
-});
+
+app.options("*", cors(corsOptions));
+
+/* =========================
+   Body Parser
+========================= */
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Static files
+/* =========================
+   Static Files
+========================= */
+
 app.use("/uploads", express.static(path.join(__dirname, "public/uploads")));
 
 initCloudinary();
-// seedPurchaseRate();
-// Ensure MongoDB is connected before handling any route
+
+/* =========================
+   DB Middleware
+========================= */
+
 app.use(async (req, res, next) => {
   try {
     await connA();
-
     next();
   } catch (err) {
     console.error("DB connection error middleware:", err);
-    res.status(500).json({ message: "Database connection error" });
+
+    res.status(500).json({
+      success: false,
+      message: "Database connection error",
+    });
   }
 });
 
-// Routes
-app.get("/api/warmup", (req, res) => res.send("Warmed up ☕"));
+/* =========================
+   Routes
+========================= */
+
+app.get("/api/warmup", (req, res) => {
+  res.send("Warmed up ☕");
+});
+
 app.use("/api", authRoute);
 app.use("/api/public", publicRoute);
-
 app.use("/api", userRoute);
 app.use("/api/admin", adminRoute);
 app.use("/api/user", userProtectedRoute);
@@ -82,26 +125,57 @@ app.use("/api/user", userProtectedRoute);
 app.get("/api", (req, res) => {
   res.json("API established");
 });
+
 app.get("/", (req, res) => {
-  res.json("Hello from Tescon API");
+  res.json("Hello from Purbali API");
 });
+
+/* =========================
+   Seed
+========================= */
+
 app.get("/seed", async (req, res) => {
-  // await seedCategories();
-  // await seedProducts();
-  // await seedData();
-  // await seedAccounts();
-  await seedRateManager();
-  res.json({ message: "Rates seeded successfully" });
+  try {
+    await seedRateManager();
+
+    res.json({
+      success: true,
+      message: "Rates seeded successfully",
+    });
+  } catch (error) {
+    console.error(error);
+
+    res.status(500).json({
+      success: false,
+      message: "Seed failed",
+    });
+  }
 });
+
+/* =========================
+   404
+========================= */
+
 app.all("*", (req, res) => {
-  res.status(404).json({ message: "API route not found", path: req.path });
+  res.status(404).json({
+    success: false,
+    message: "API route not found",
+    path: req.path,
+  });
 });
 
-// Error handler
+/* =========================
+   Error Handler
+========================= */
+
 app.use((err, req, res, next) => {
-  res.status(500).json({ message: "Internal server error" });
+  console.error("ERROR:", err);
+
+  res.status(500).json({
+    success: false,
+    message: err.message || "Internal server error",
+  });
 });
 
-// Correctly export for Vercel:
 export { app };
 export default app;
