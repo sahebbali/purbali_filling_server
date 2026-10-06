@@ -11,6 +11,7 @@ import billRoute from "./billRoute.js";
 import reportRoutes from "./report.js";
 import PurchaseRoutes from "./purchaseRoute.js";
 import ExpenseRoutes from "./expenseRoute.js";
+import KachaSlipRoutes from "./kachaSlipRouter.js";
 
 const router = express.Router();
 const middleware = [verifyJWT, verifyAdmin];
@@ -25,4 +26,5 @@ router.use(accountRoute);
 router.use(billRoute);
 router.use(PurchaseRoutes);
 router.use(ExpenseRoutes);
+router.use(KachaSlipRoutes);
 export default router;
