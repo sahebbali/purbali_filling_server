@@ -168,6 +168,8 @@ export const createAc = async (req, res, next) => {
       sl_no: body.sl_no ?? null,
       ac_no: String(body.ac_no).trim(),
       name: String(body.name).trim(),
+      ait: Number(body.ait) || 0,
+      tax: Number(body.tax) || 0,
       address: Array.isArray(body.address) ? body.address : [],
       lines: Array.isArray(body.lines) ? body.lines : [],
       purchase_rates: sanitizeRates(body.purchase_rates),
@@ -208,6 +210,8 @@ export const patchAc = async (req, res, next) => {
 
     if (body.sl_no !== undefined) update.sl_no = body.sl_no;
     if (body.name !== undefined) update.name = String(body.name).trim();
+    if (body.ait !== undefined) update.ait = Number(body.ait) || 0;
+    if (body.tax !== undefined) update.tax = Number(body.tax) || 0;
 
     // Renaming ac_no — check for collision first.
     if (body.ac_no !== undefined) {

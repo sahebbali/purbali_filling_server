@@ -24,7 +24,7 @@ const purbaliEntrySchema = new mongoose.Schema(
     // Fixed consumption categories, independent of department
     consumptionType: {
       type: String,
-      enum: ["Generator", "Hospital", "Stock", "Other", ""],
+      enum: ["Generator", "Hospital", "Stock", "Other", "Cutter Machine"],
       default: "",
     },
 
