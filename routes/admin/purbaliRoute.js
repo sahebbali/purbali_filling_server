@@ -4,6 +4,7 @@ import {
   deleteEntry,
   getEntries,
   getEntryById,
+  getPurbaliDashboard,
   updateEntry,
 } from "../../controllers/purbaliController.js";
 const router = express.Router();
@@ -16,5 +17,7 @@ router.post("/create-purbali-entry", createPurbaliEntry);
 router.get("/get-entry/:id", getEntryById);
 router.put("/update-purbali-entry/:id", updateEntry);
 router.delete("/delete-purbali-entry/:id", deleteEntry);
+
+router.get("/dashboard", getPurbaliDashboard);
 
 export default router;

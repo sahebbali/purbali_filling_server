@@ -1,4 +1,6 @@
 import PurbaliEntry from "../models/PurbaliEntry.js";
+import Expense, { EXPENSE_TYPES } from "../models/PurbaliExpense.js";
+import KachaSlip from "../models/kachaSlip.js";
 
 // @route   POST /api/purbali-entries
 export const createPurbaliEntry = async (req, res) => {
@@ -215,3 +217,284 @@ export const deleteEntry = async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 };
+
+const TZ = "Asia/Dhaka";
+const DAY = 24 * 60 * 60 * 1000;
+const round2 = (n) => Math.round((Number(n || 0) + Number.EPSILON) * 100) / 100;
+
+const ymd = (d) => new Intl.DateTimeFormat("en-CA", { timeZone: TZ }).format(d); // YYYY-MM-DD
+
+// Interpret from/to as whole Dhaka days (UTC+6)
+function parseRange(q) {
+  const today = ymd(new Date());
+  const toStr = /^\d{4}-\d{2}-\d{2}$/.test(q.to || "") ? q.to : today;
+  const fromStr = /^\d{4}-\d{2}-\d{2}$/.test(q.from || "")
+    ? q.from
+    : ymd(new Date(new Date(`${toStr}T00:00:00+06:00`).getTime() - 29 * DAY));
+
+  const from = new Date(`${fromStr}T00:00:00+06:00`);
+  const to = new Date(`${toStr}T23:59:59.999+06:00`);
+  if (isNaN(from) || isNaN(to) || from > to) return null;
+
+  const span = to.getTime() - from.getTime() + 1;
+  return {
+    from,
+    to,
+    prevFrom: new Date(from.getTime() - span),
+    prevTo: new Date(from.getTime() - 1),
+    fromStr,
+    toStr,
+  };
+}
+
+const delta = (cur, prev) =>
+  prev > 0 ? round2(((cur - prev) / prev) * 100) : cur > 0 ? 100 : 0;
+
+const inRange = (from, to) => ({ date: { $gte: from, $lte: to } });
+
+const salesTotals = (from, to) =>
+  PurbaliEntry.aggregate([
+    { $match: inRange(from, to) },
+    {
+      $group: {
+        _id: null,
+        total: { $sum: "$totalAmount" },
+        bills: { $sum: 1 },
+      },
+    },
+  ]);
+
+const expenseTotals = (from, to) =>
+  Expense.aggregate([
+    { $match: inRange(from, to) },
+    { $group: { _id: null, total: { $sum: "$amount" } } },
+  ]);
+
+const dailyGroup = (field) => ({
+  $group: {
+    _id: { $dateToString: { format: "%Y-%m-%d", date: "$date", timezone: TZ } },
+    total: { $sum: field },
+  },
+});
+
+export async function getPurbaliDashboard(req, res) {
+  try {
+    const r = parseRange(req.query);
+    if (!r) return res.status(400).json({ message: "Invalid date range" });
+    const { from, to, prevFrom, prevTo } = r;
+
+    const [
+      curSales,
+      prevSales,
+      curExp,
+      prevExp,
+      salesDaily,
+      expDaily,
+      itemRows,
+      consumptionRows,
+      topAccounts,
+      topCars,
+      expenseRows,
+      slipRows,
+      pendingSlips,
+      recentEntries,
+    ] = await Promise.all([
+      salesTotals(from, to),
+      salesTotals(prevFrom, prevTo),
+      expenseTotals(from, to),
+      expenseTotals(prevFrom, prevTo),
+
+      PurbaliEntry.aggregate([
+        { $match: inRange(from, to) },
+        dailyGroup("$totalAmount"),
+      ]),
+      Expense.aggregate([{ $match: inRange(from, to) }, dailyGroup("$amount")]),
+
+      // Sales by item
+      PurbaliEntry.aggregate([
+        { $match: inRange(from, to) },
+        { $unwind: "$items" },
+        {
+          $group: {
+            _id: "$items.id",
+            label: { $first: "$items.label" },
+            qty: { $sum: "$items.qty" },
+            amount: { $sum: "$items.amount" },
+          },
+        },
+        { $sort: { amount: -1 } },
+      ]),
+
+      // Sales by consumption type
+      PurbaliEntry.aggregate([
+        { $match: inRange(from, to) },
+        {
+          $group: {
+            _id: {
+              $cond: [
+                { $in: ["$consumptionType", ["", null]] },
+                "Unspecified",
+                "$consumptionType",
+              ],
+            },
+            amount: { $sum: "$totalAmount" },
+            bills: { $sum: 1 },
+          },
+        },
+        { $sort: { amount: -1 } },
+      ]),
+
+      // Top accounts
+      PurbaliEntry.aggregate([
+        { $match: inRange(from, to) },
+        {
+          $group: {
+            _id: "$accountNo",
+            amount: { $sum: "$totalAmount" },
+            bills: { $sum: 1 },
+            department: { $last: "$department" },
+          },
+        },
+        { $sort: { amount: -1 } },
+        { $limit: 5 },
+      ]),
+
+      // Top cars
+      PurbaliEntry.aggregate([
+        { $match: { ...inRange(from, to), carNo: { $nin: [null, ""] } } },
+        {
+          $group: {
+            _id: "$carNo",
+            amount: { $sum: "$totalAmount" },
+            bills: { $sum: 1 },
+          },
+        },
+        { $sort: { amount: -1 } },
+        { $limit: 5 },
+      ]),
+
+      // Expenses by type
+      Expense.aggregate([
+        { $match: inRange(from, to) },
+        {
+          $group: {
+            _id: "$type",
+            amount: { $sum: "$amount" },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { amount: -1 } },
+      ]),
+
+      // Kacha slips: pipeline status (all time, not deleted)
+      KachaSlip.aggregate([
+        { $match: { isDeleted: false } },
+        {
+          $group: {
+            _id: "$status",
+            count: { $sum: 1 },
+            amount: { $sum: "$totalAmount" },
+          },
+        },
+      ]),
+
+      // Oldest pending slips first -> what needs billing
+      KachaSlip.find({ isDeleted: false, status: "pending" })
+        .sort({ date: 1 })
+        .limit(6)
+        .select("slNo date carNo accountNo couponNo totalAmount")
+        .lean(),
+
+      PurbaliEntry.find(inRange(from, to))
+        .sort({ date: -1, createdAt: -1 })
+        .limit(8)
+        .select("date couponNo accountNo carNo consumptionType totalAmount")
+        .lean(),
+    ]);
+
+    const sales = curSales[0]?.total || 0;
+    const bills = curSales[0]?.bills || 0;
+    const expenses = curExp[0]?.total || 0;
+    const pSales = prevSales[0]?.total || 0;
+    const pBills = prevSales[0]?.bills || 0;
+    const pExpenses = prevExp[0]?.total || 0;
+
+    // Fill every day of the range so the chart has no gaps
+    const sMap = new Map(salesDaily.map((d) => [d._id, d.total]));
+    const eMap = new Map(expDaily.map((d) => [d._id, d.total]));
+    const trend = [];
+    for (let t = from.getTime(); t <= to.getTime(); t += DAY) {
+      const key = ymd(new Date(t));
+      trend.push({
+        date: key,
+        sales: round2(sMap.get(key)),
+        expenses: round2(eMap.get(key)),
+      });
+    }
+
+    const labelOf = Object.fromEntries(
+      EXPENSE_TYPES.map((t) => [t.key, t.label]),
+    );
+    const slip = Object.fromEntries(slipRows.map((s) => [s._id, s]));
+
+    res.json({
+      range: { from: r.fromStr, to: r.toStr },
+      kpis: {
+        sales: { value: round2(sales), change: delta(sales, pSales) },
+        bills: { value: bills, change: delta(bills, pBills) },
+        expenses: {
+          value: round2(expenses),
+          change: delta(expenses, pExpenses),
+        },
+        net: {
+          value: round2(sales - expenses),
+          change: delta(sales - expenses, pSales - pExpenses),
+        },
+        avgBill: { value: bills ? round2(sales / bills) : 0 },
+        pendingSlips: {
+          count: slip.pending?.count || 0,
+          amount: round2(slip.pending?.amount),
+        },
+      },
+      trend,
+      items: itemRows.map((i) => ({
+        id: i._id,
+        label: i.label,
+        qty: round2(i.qty),
+        amount: round2(i.amount),
+      })),
+      consumption: consumptionRows.map((c) => ({
+        type: c._id,
+        amount: round2(c.amount),
+        bills: c.bills,
+      })),
+      expenseByType: expenseRows.map((e) => ({
+        type: e._id,
+        label: labelOf[e._id] || e._id,
+        amount: round2(e.amount),
+        count: e.count,
+      })),
+      topAccounts: topAccounts.map((a) => ({
+        accountNo: a._id,
+        department: a.department || "",
+        amount: round2(a.amount),
+        bills: a.bills,
+      })),
+      topCars: topCars.map((c) => ({
+        carNo: c._id,
+        amount: round2(c.amount),
+        bills: c.bills,
+      })),
+      slipStatus: {
+        pending: slip.pending?.count || 0,
+        billed: slip.billed?.count || 0,
+        cancelled: slip.cancelled?.count || 0,
+      },
+      pendingSlips,
+      recentEntries,
+    });
+  } catch (err) {
+    console.error("purbali dashboard:", err);
+    res.status(500).json({ message: "Failed to load dashboard" });
+  }
+}
