@@ -927,6 +927,7 @@ async function getAccountVehicleNumbers(accountNo) {
  * accountNo (this report is always scoped to a single account).
  */
 async function fetchVehicleItemMatrix(match) {
+  // console.log("------------------------------");
   const { accountNo, consumptionType, ...rest } = match;
   if (!accountNo) {
     throw new Error("fetchVehicleItemMatrix requires accountNo in match");
@@ -951,7 +952,18 @@ async function fetchVehicleItemMatrix(match) {
         : []),
       {
         $group: {
-          _id: { carNo: "$carNo", itemId: "$items.id" },
+          _id: {
+            carNo: "$carNo",
+            // item-level type first, then fall back to the entry-level type
+            consumptionType: {
+              $cond: [
+                { $eq: [{ $ifNull: ["$items.consumptionType", ""] }, ""] },
+                { $ifNull: ["$consumptionType", ""] },
+                "$items.consumptionType",
+              ],
+            },
+            itemId: "$items.id",
+          },
           qty: { $sum: "$items.qty" },
           amount: { $sum: "$items.amount" },
         },
@@ -967,24 +979,38 @@ async function fetchVehicleItemMatrix(match) {
   }));
   const itemIds = itemColumns.map((c) => c.itemId);
 
-  // carNo -> itemId -> { qty, amount } (summed, not overwritten)
-  const byCar = new Map();
+  // Row key: one row per carNo, or one row per consumptionType
+  // (e.g. "Generator") when carNo is blank.
+  const carKey = (carNo) => `car:${carNo}`;
+  const typeKey = (type) => `type:${type}`;
+
+  // rowKey -> { label, cells: itemId -> { qty, amount } }
+  const byRow = new Map();
   for (const e of entryTotals) {
     const carNo = e._id.carNo || "";
-    const itemId = e._id.itemId;
-    if (!byCar.has(carNo)) byCar.set(carNo, {});
-    const cell = (byCar.get(carNo)[itemId] ??= { qty: 0, amount: 0 });
+    const type = e._id.consumptionType || "";
+    const key = carNo ? carKey(carNo) : typeKey(type);
+    const label = carNo || type || "—";
+
+    if (!byRow.has(key)) byRow.set(key, { label, cells: {} });
+    const cell = (byRow.get(key).cells[e._id.itemId] ??= { qty: 0, amount: 0 });
     cell.qty += e.qty || 0;
     cell.amount += e.amount || 0;
   }
 
-  // vehicle list + any carNo that has data but isn't a registered vehicle
+  // order: registered vehicles, then other car numbers, then type rows
   const known = new Set(vehicleNumbers);
-  const extraCars = [...byCar.keys()].filter((c) => !known.has(c));
-  const allCars = [...vehicleNumbers, ...extraCars];
+  const rowKeys = [
+    ...vehicleNumbers.map(carKey),
+    ...[...byRow.keys()].filter(
+      (k) => k.startsWith("car:") && !known.has(k.slice(4)),
+    ),
+    ...[...byRow.keys()].filter((k) => k.startsWith("type:")),
+  ];
 
-  const rows = allCars.map((carNo, idx) => {
-    const cells = byCar.get(carNo) || {};
+  const rows = rowKeys.map((key, idx) => {
+    const entry = byRow.get(key);
+    const cells = entry?.cells || {};
     const values = {};
     let rowAmount = 0;
     for (const itemId of itemIds) {
@@ -994,7 +1020,7 @@ async function fetchVehicleItemMatrix(match) {
     }
     return {
       slNo: idx + 1,
-      vehicleNumber: carNo || consumptionType || "—", // blank carNo -> "Generator"
+      vehicleNumber: entry?.label ?? key.slice(4), // registered car with no data
       values,
       amount: rowAmount || null,
     };

@@ -348,51 +348,32 @@ const pick = (obj, keys) =>
 //   { quantities: { octane: 50 }, rates: { octane: 130 } }   (rates optional)
 //   { items: [{ item: "octane", qty: 50, rate: 130 }] }      (rate optional)
 // Returns [] when neither has anything (charges-only purchase).
-const buildItems = async (accountNo, body) => {
-  const { quantities, rates, items } = body;
+const toLine = (item, qty, rate) => {
+  if (!PRODUCT_ITEMS.includes(item)) {
+    throw httpError(400, `Unknown item: ${item}`);
+  }
+  if (!(Number(qty) > 0)) {
+    throw httpError(400, `Quantity for "${item}" must be greater than 0`);
+  }
+  if (!(Number(rate) > 0)) {
+    throw httpError(400, `Rate for "${item}" must be greater than 0`);
+  }
+  return { item, qty: Number(qty), rate: Number(rate) };
+};
 
-  // 1) quantities map (used by the AddPurchase form)
-  const hasQty =
-    quantities &&
-    typeof quantities === "object" &&
-    Object.values(quantities).some((q) => Number(q) > 0);
+const buildItems = ({ quantities, rates = {}, items }) => {
+  // 1) quantities + rates maps (AddPurchase form)
+  if (quantities && typeof quantities === "object") {
+    const lines = Object.entries(quantities)
+      .filter(([, qty]) => Number(qty) > 0)
+      .map(([item, qty]) => toLine(item, qty, rates[item]));
 
-  if (hasQty) {
-    const card = await PurchaseRate.findOne({ accountNo });
-    if (!card)
-      throw httpError(404, `No rate card found for account ${accountNo}`);
-
-    const lines = card.toLineItems(quantities, rates);
-    if (lines.some((l) => !(Number(l.rate) > 0))) {
-      throw httpError(400, "Every item needs a rate greater than 0");
-    }
-    return lines;
+    if (lines.length) return lines;
   }
 
   // 2) explicit items array
-  if (Array.isArray(items) && items.length > 0) {
-    const needsCard = items.some((l) => l.rate === undefined || l.rate === "");
-    const card = needsCard ? await PurchaseRate.findOne({ accountNo }) : null;
-
-    return items.map((l) => {
-      if (!PRODUCT_ITEMS.includes(l.item))
-        throw httpError(400, `Unknown item: ${l.item}`);
-
-      const qty = Number(l.qty);
-      if (!(qty > 0))
-        throw httpError(400, `Quantity for "${l.item}" must be greater than 0`);
-
-      const rate =
-        l.rate !== undefined && l.rate !== "" ? Number(l.rate) : card?.[l.item];
-      if (!(Number(rate) > 0)) {
-        throw httpError(
-          400,
-          `No rate for "${l.item}". Send a rate or create a rate card.`,
-        );
-      }
-
-      return { item: l.item, qty, rate: Number(rate) };
-    });
+  if (Array.isArray(items) && items.length) {
+    return items.map(({ item, qty, rate }) => toLine(item, qty, rate));
   }
 
   return []; // nothing here, charges may still be present
@@ -412,21 +393,26 @@ const buildCharges = (charges = {}) => {
 /* ------------------------------------------------------------------ */
 
 // POST /api/purchases
+const PURCHASE_FIELDS = ["accountNo", "couponNo", "date", "note"];
+
 export const createPurchase = asyncHandler(async (req, res) => {
-  const { accountNo } = req.body;
+  const { body } = req;
+
+  const accountNo = String(body.accountNo ?? "").trim();
   if (!accountNo) throw httpError(400, "accountNo is required");
 
-  const items = await buildItems(accountNo, req.body);
-  const charges = buildCharges(req.body.charges);
+  const items = buildItems(body);
+  const charges = buildCharges(body.charges);
 
-  if (items.length === 0 && charges.length === 0) {
+  if (!items.length && !charges.length) {
     throw httpError(400, "Add at least one item or charge");
   }
 
-  // total, itemsTotal and chargesTotal are computed by the model's
+  // total, itemsTotal and chargesTotal come from the model's
   // pre("validate") hook, so any `total` sent by the client is ignored.
   const purchase = await Purchase.create({
-    ...pick(req.body, ["accountNo", "couponNo", "date", "note"]),
+    ...pick(body, PURCHASE_FIELDS),
+    accountNo, // trimmed version overrides the raw one from pick()
     items,
     charges,
   });
@@ -495,17 +481,31 @@ export const getPurchase = asyncHandler(async (req, res) => {
 
 // PUT /api/purchases/:id
 // Load -> modify -> save() so the pre-validate hook recomputes totals.
+const UPDATE_FIELDS = ["date", "discount", "paid", "note"];
+
 export const updatePurchase = asyncHandler(async (req, res) => {
+  const { body } = req;
+
   const purchase = await Purchase.findById(req.params.id);
   if (!purchase) throw httpError(404, "Purchase not found");
 
-  purchase.set(pick(req.body, ["date", "discount", "paid", "note"]));
+  purchase.set(pick(body, UPDATE_FIELDS));
 
-  if (req.body.items || req.body.quantities) {
-    purchase.items = await buildItems(purchase.accountNo, req.body);
+  const replacingItems =
+    body.items !== undefined || body.quantities !== undefined;
+  const replacingCharges = body.charges !== undefined;
+
+  if (replacingItems) purchase.items = buildItems(body);
+  if (replacingCharges) purchase.charges = buildCharges(body.charges);
+
+  if (!purchase.items.length && !purchase.charges.length) {
+    throw httpError(400, "A purchase needs at least one item or charge");
   }
 
+  // total, itemsTotal and chargesTotal are recalculated by the model's
+  // pre("validate") hook on save.
   await purchase.save();
+
   res.json({ success: true, data: purchase });
 });
 
