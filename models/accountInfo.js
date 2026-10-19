@@ -36,18 +36,6 @@ const LineSchema = new Schema(
       type: String,
       trim: true,
     },
-    ait: {
-      type: Number,
-      trim: true,
-      default: 0,
-      min: 0,
-    },
-    tax: {
-      type: Number,
-      trim: true,
-      default: 0,
-      min: 0,
-    },
 
     // Multiple tag codes
     // Example: ["SAL", "ACRL", "Akij"]
@@ -152,6 +140,18 @@ const AccountSchema = new Schema(
     purchase_rates: {
       type: PurchaseRateSchema,
       default: () => ({}), // every rate defaults to 0
+    },
+    ait: {
+      type: Number,
+      trim: true,
+      default: 0,
+      min: 0,
+    },
+    tax: {
+      type: Number,
+      trim: true,
+      default: 0,
+      min: 0,
     },
   },
   {

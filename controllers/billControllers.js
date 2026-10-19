@@ -757,108 +757,105 @@ export const getItemWiseMonthlyBill = asyncHandler(async (req, res) => {
     data: { label: monthLabelFromQuery(req.query.month), ...bill },
   });
 });
+const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+
+// Normalize PurbaliRate.rate (number | array | null) into an array
+const toRateList = (rate) =>
+  Array.isArray(rate) && rate.length > 0 ? rate : [rate ?? null];
+
 async function fetchItemWiseBillData(match) {
-  // Printable items, in SL NO order. `rate` may be a number or an array.
-  const rateItems = await PurbaliRate.find({ showInBill: true })
-    .sort({ order: 1, createdAt: 1 })
-    .lean();
-  // KEY CHANGE: group entries by item id AND rate,
-  // so multiple rates for the same item become multiple rows.
-  const entryTotals = await PurbaliEntry.aggregate([
-    { $match: match },
-    { $unwind: "$items" },
-    {
-      $group: {
-        _id: { id: "$items.id", rate: "$items.rate" },
-        totalQty: { $sum: "$items.qty" },
-        totalAmount: { $sum: "$items.amount" },
-        label: { $first: "$items.label" },
-        unit: { $first: "$items.unit" },
+  const [rateItems, account, entryTotals] = await Promise.all([
+    // Printable items, in SL NO order
+    PurbaliRate.find({ showInBill: true })
+      .sort({ order: 1, createdAt: 1 })
+      .lean(),
+
+    Account.findOne({ ac_no: match.accountNo }).select("ac_no ait tax").lean(),
+
+    // One group per item id AND rate => multiple rates become multiple rows
+    PurbaliEntry.aggregate([
+      { $match: match },
+      { $unwind: "$items" },
+      {
+        $group: {
+          _id: { id: "$items.id", rate: "$items.rate" },
+          qty: { $sum: "$items.qty" },
+          amount: { $sum: "$items.amount" },
+          label: { $first: "$items.label" },
+          unit: { $first: "$items.unit" },
+        },
       },
-    },
+    ]),
   ]);
 
-  // Map: itemId -> [{ rate, qty, amount, label, unit }, ...]
+  // itemId -> [{ rate, qty, amount, label, unit }]
   const entriesById = new Map();
-  for (const e of entryTotals) {
-    const id = e._id.id;
-    if (!entriesById.has(id)) entriesById.set(id, []);
-    entriesById.get(id).push({
-      rate: e._id.rate,
-      qty: e.totalQty,
-      amount: e.totalAmount,
-      label: e.label,
-      unit: e.unit,
-    });
+  for (const { _id, qty, amount, label, unit } of entryTotals) {
+    if (!entriesById.has(_id.id)) entriesById.set(_id.id, []);
+    entriesById.get(_id.id).push({ rate: _id.rate, qty, amount, label, unit });
   }
 
   const rows = [];
-  let slNo = 0;
-  const consumed = new Set();
+  const addRow = (itemId, particulars, unit, qty, rate, amount) => {
+    rows.push({
+      slNo: rows.length + 1,
+      itemId,
+      particulars,
+      unit: unit ?? null,
+      quantity: qty > 0 ? qty : null, // null -> "-"
+      rate: rate ?? null,
+      amount: amount > 0 ? amount : null, // null -> "-"
+    });
+  };
 
-  // 1) Walk the rate list first (defines SL NO order)
+  // 1) Rate list defines SL NO order
+  const consumed = new Set();
   for (const item of rateItems) {
     consumed.add(item.itemId);
-    const entryRates = entriesById.get(item.itemId) || [];
+    const entries = entriesById.get(item.itemId);
 
-    if (entryRates.length > 0) {
-      // 👉 Rates come from PurbaliEntry first.
-      //    If entries used 145 (and/or 165, ...) we emit one row per rate.
-      for (const e of entryRates) {
-        slNo += 1;
-        rows.push({
-          slNo,
-          itemId: item.itemId,
-          particulars: item.label || e.label,
-          unit: item.unit || e.unit || null,
-          quantity: e.qty > 0 ? e.qty : null, // null -> "-"
-          rate: e.rate ?? item.rate ?? null, // entry rate wins
-          amount: e.amount > 0 ? e.amount : null,
-        });
+    if (entries?.length) {
+      // Entry rates win; one row per distinct rate
+      for (const e of entries) {
+        addRow(
+          item.itemId,
+          item.label || e.label,
+          item.unit || e.unit,
+          e.qty,
+          e.rate,
+          e.amount,
+        );
       }
     } else {
-      // No entries yet → fall back to PurbaliRate (single or array of rates)
-      const rates =
-        Array.isArray(item.rate) && item.rate.length > 0
-          ? item.rate
-          : item.rate != null
-          ? [item.rate]
-          : [null];
-
-      for (const r of rates) {
-        slNo += 1;
-        rows.push({
-          slNo,
-          itemId: item.itemId,
-          particulars: item.label,
-          unit: item.unit ?? null,
-          quantity: null, // no qty -> "-"
-          rate: r, // PurbaliRate rate shown
-          amount: null, // no amount -> "-"
-        });
+      // No entries yet -> show PurbaliRate rate(s) with "-" for qty/amount
+      for (const rate of toRateList(item.rate)) {
+        addRow(item.itemId, item.label, item.unit, 0, rate, 0);
       }
     }
   }
 
-  // 2) Items that only appear in entries (not in PurbaliRate) — still show them
-  for (const [itemId, groups] of entriesById) {
+  // 2) Items that exist only in entries
+  for (const [itemId, entries] of entriesById) {
     if (consumed.has(itemId)) continue;
-    for (const e of groups) {
-      slNo += 1;
-      rows.push({
-        slNo,
-        itemId,
-        particulars: e.label || itemId,
-        unit: e.unit || null,
-        quantity: e.qty > 0 ? e.qty : null,
-        rate: e.rate ?? null,
-        amount: e.amount > 0 ? e.amount : null,
-      });
+    for (const e of entries) {
+      addRow(itemId, e.label || itemId, e.unit, e.qty, e.rate, e.amount);
     }
   }
 
-  const totalTaka = rows.reduce((sum, r) => sum + (r.amount || 0), 0);
-  return { rows, totalTaka };
+  // ---- Totals ----
+  const subTotal = round2(rows.reduce((sum, r) => sum + (r.amount || 0), 0));
+
+  const taxPercent = Number(account?.tax) || 0;
+  const taxAmount = taxPercent > 0 ? round2((subTotal * taxPercent) / 100) : 0;
+  const totalTaka = round2(subTotal + taxAmount);
+
+  return {
+    rows,
+    subTotal, // total before tax
+    taxPercent, // e.g. 10
+    taxAmount, // e.g. 10% of subTotal
+    totalTaka, // subTotal + taxAmount
+  };
 }
 
 /* ------------------------------------------------------------------ */

@@ -147,6 +147,7 @@ export const getAc = async (req, res, next) => {
 export const createAc = async (req, res, next) => {
   try {
     const body = req.body ?? {};
+    // console.log("createAc body:", body);
 
     if (!body.ac_no)
       return res.status(400).json({ error: "ac_no is required" });
