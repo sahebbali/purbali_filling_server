@@ -3,19 +3,26 @@ import Expense, { EXPENSE_TYPES } from "../models/PurbaliExpense.js";
 import KachaSlip from "../models/kachaSlip.js";
 
 // @route   POST /api/purbali-entries
+// Treat "", null and whitespace-only strings as "not provided"
+const clean = (v) => {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v === "string") {
+    const t = v.trim();
+    return t === "" ? undefined : t;
+  }
+  return v;
+};
+
 export const createPurbaliEntry = async (req, res) => {
   try {
-    const {
-      date,
-      receivingDate,
-      couponNo,
-      accountNo,
-      department,
-      consumptionType,
-      carNo,
-      items,
-      totalAmount,
-    } = req.body;
+    const date = clean(req.body.date);
+    const receivingDate = clean(req.body.receivingDate);
+    const couponNo = clean(req.body.couponNo);
+    const accountNo = clean(req.body.accountNo);
+    const department = clean(req.body.department);
+    const consumptionType = clean(req.body.consumptionType);
+    const carNo = clean(req.body.carNo);
+    const { items } = req.body;
 
     if (!date) {
       return res.status(400).json({ message: "Date is required." });
@@ -30,11 +37,41 @@ export const createPurbaliEntry = async (req, res) => {
         .status(400)
         .json({ message: "At least one item is required." });
     }
-    const existCoupon = await PurbaliEntry.findOne({ couponNo });
-    if (existCoupon) {
-      return res
-        .status(400)
-        .json({ message: "An entry with this coupon number already exists." });
+
+    // Validate items and recompute amounts on the server
+    const cleanItems = [];
+    for (const item of items) {
+      const qty = Number(item?.qty);
+      const rate = Number(item?.rate);
+      if (!item?.id || !(qty > 0) || !(rate >= 0)) {
+        return res.status(400).json({
+          message: `Invalid item "${
+            item?.label || item?.id || "unknown"
+          }": qty and rate must be valid numbers.`,
+        });
+      }
+      cleanItems.push({
+        id: item.id,
+        label: item.label,
+        qty,
+        rate,
+        amount: Number((qty * rate).toFixed(2)),
+      });
+    }
+    const totalAmount = Number(
+      cleanItems.reduce((sum, i) => sum + i.amount, 0).toFixed(2),
+    );
+
+    // Only check duplicates when a coupon number was actually provided
+    if (couponNo) {
+      const existCoupon = await PurbaliEntry.exists({ couponNo });
+      if (existCoupon) {
+        return res
+          .status(409)
+          .json({
+            message: "An entry with this coupon number already exists.",
+          });
+      }
     }
 
     const entry = await PurbaliEntry.create({
@@ -45,7 +82,7 @@ export const createPurbaliEntry = async (req, res) => {
       department,
       consumptionType,
       carNo,
-      items,
+      items: cleanItems,
       totalAmount,
       createdBy: req.user?._id,
     });
@@ -53,6 +90,20 @@ export const createPurbaliEntry = async (req, res) => {
     return res.status(201).json({ message: "Purbali entry created.", entry });
   } catch (err) {
     console.error("createPurbaliEntry error:", err);
+
+    // Mongoose validation errors are the client's fault -> 400
+    if (err.name === "ValidationError") {
+      const messages = Object.values(err.errors).map((e) => e.message);
+      return res.status(400).json({ message: messages.join(", ") });
+    }
+
+    // Race condition: two requests with the same coupon passed the check above
+    if (err.code === 11000) {
+      return res
+        .status(409)
+        .json({ message: "An entry with this coupon number already exists." });
+    }
+
     return res.status(500).json({ message: "Failed to create Purbali entry." });
   }
 };

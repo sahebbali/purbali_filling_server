@@ -25,7 +25,6 @@ const purbaliEntrySchema = new mongoose.Schema(
     consumptionType: {
       type: String,
       enum: ["Generator", "Hospital", "Stock", "Other", "Cutter Machine"],
-      default: "",
     },
 
     carNo: { type: String, trim: true },
