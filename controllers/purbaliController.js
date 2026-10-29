@@ -1,6 +1,7 @@
 import PurbaliEntry from "../models/PurbaliEntry.js";
 import Expense, { EXPENSE_TYPES } from "../models/PurbaliExpense.js";
 import KachaSlip from "../models/kachaSlip.js";
+import ensureVehicle from "../utils/ensureVehicle.js";
 
 // @route   POST /api/purbali-entries
 // Treat "", null and whitespace-only strings as "not provided"
@@ -66,11 +67,9 @@ export const createPurbaliEntry = async (req, res) => {
     if (couponNo) {
       const existCoupon = await PurbaliEntry.exists({ couponNo });
       if (existCoupon) {
-        return res
-          .status(409)
-          .json({
-            message: "An entry with this coupon number already exists.",
-          });
+        return res.status(409).json({
+          message: "An entry with this coupon number already exists.",
+        });
       }
     }
 
@@ -86,6 +85,17 @@ export const createPurbaliEntry = async (req, res) => {
       totalAmount,
       createdBy: req.user?._id,
     });
+    let vehicleCreated = false;
+    try {
+      ({ created: vehicleCreated } = await ensureVehicle({
+        carNo,
+        accountNo,
+        department,
+        items: cleanItems, // <-- added
+      }));
+    } catch (vehicleErr) {
+      console.error("ensureVehicle error:", vehicleErr);
+    }
 
     return res.status(201).json({ message: "Purbali entry created.", entry });
   } catch (err) {

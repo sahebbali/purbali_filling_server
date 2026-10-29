@@ -31,6 +31,7 @@ const kachaSlipSchema = new mongoose.Schema(
     others: {
       ...fuelLine,
       description: { type: String, trim: true },
+      name: { type: String, trim: true },
     },
 
     driverName: { type: String, trim: true },
@@ -60,8 +61,8 @@ const kachaSlipSchema = new mongoose.Schema(
     },
 
     isDeleted: { type: Boolean, default: false, index: true },
-    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    createdBy: { type: String, required: true, trim: true, index: true },
+    updatedBy: { type: String, trim: true, index: true },
   },
   { timestamps: true },
 );

@@ -1,4 +1,5 @@
 import KachaSlip from "../models/kachaSlip.js";
+import getUserName from "../utils/getUserName.js";
 
 const PICK = [
   "date",
@@ -20,10 +21,29 @@ const pick = (obj) =>
   Object.fromEntries(PICK.filter((k) => k in obj).map((k) => [k, obj[k]]));
 
 export const createSlip = async (req, res) => {
+  console.log("Creating slip with data:", req.body);
+  console.log("User creating slip:", req.auth);
+  const existingSlip = await KachaSlip.findOne({
+    carNo: req.body.carNo,
+    date: req.body.date,
+    isDeleted: false,
+  });
+  if (existingSlip)
+    return res.status(409).json({
+      success: false,
+      message: "Slip already exists for this car on the given date",
+    });
+
+  const userName = await getUserName(req);
+  console.log("User creating slip:", userName);
+
+  if (!userName)
+    return res.status(400).json({ success: false, message: "User not found" });
+
   try {
     const slip = await KachaSlip.create({
       ...pick(req.body),
-      createdBy: req.user?._id,
+      createdBy: userName,
     });
     res.status(201).json({ success: true, data: slip });
   } catch (e) {
@@ -161,16 +181,27 @@ export const updateSlip = async (req, res) => {
 };
 
 export const updateStatus = async (req, res) => {
-  const { status, billId } = req.body;
-  if (!["billed", "cancelled"].includes(status))
-    return res.status(400).json({ success: false, message: "Invalid status" });
+  const { status } = req.body;
+  console.log("Updating slip status:", req.params.id, "to", status);
 
+  const existingSlip = await KachaSlip.findOne({
+    _id: req.params.id,
+    isDeleted: false,
+    status: "pending",
+  });
+  if (!existingSlip) {
+    return res.status(404).json({
+      success: false,
+      message: "Slip not found or not in pending status",
+    });
+  }
+  const userName = await getUserName(req);
   const slip = await KachaSlip.findOneAndUpdate(
     { _id: req.params.id, isDeleted: false },
     {
       status,
-      billId: status === "billed" ? billId : null,
-      updatedBy: req.user?._id,
+
+      updatedBy: userName,
     },
     { new: true },
   );
