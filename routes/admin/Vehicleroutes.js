@@ -7,7 +7,7 @@ import {
   getVehicleByIdOrNo,
   getVehicles,
   updateVehicle,
-} from "../../controllers/Vehiclecontroller.js";
+} from "../../controllers/vehicleController.js";
 
 const router = express.Router();
 
