@@ -17,6 +17,7 @@ import { initCloudinary } from "./utils/cloudinary.js";
 
 import connectDB from "./db-config/db.js";
 import { seedRateManager } from "./seed/rateManager.js";
+import { seedVehicle } from "./seed/seedVehicle.js";
 
 const app = express();
 
@@ -89,6 +90,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/uploads", express.static(path.join(__dirname, "public/uploads")));
 
 initCloudinary();
+// seedVehicle();
 
 /* =========================
    DB Middleware

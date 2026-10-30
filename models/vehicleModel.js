@@ -7,7 +7,7 @@ const vehicleSchema = new mongoose.Schema(
     vehicle_no: {
       type: String,
       required: [true, "Vehicle number is required"],
-      unique: true,
+
       trim: true,
       index: true,
     },
